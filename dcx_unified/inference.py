@@ -13,9 +13,8 @@ from PIL import Image
 sys.path.append(os.path.join(os.path.dirname(__file__), 'core'))
 
 from base_options import BaseOptions
-from model import create_model
-from utils import FWHM_sigma, gaussian_filter
-import utils.util as util
+from core.test import create_model_v2 as create_model
+from scipy.ndimage import gaussian_filter
 
 
 def resize_keep_ratio(img, size):
@@ -50,7 +49,7 @@ def pad_image(img, size):
 
 def histogram_normalization(data):
     """Apply histogram normalization"""
-    sigma = FWHM_sigma * 1.2
+    sigma = 1.2  # FWHM_sigma equivalent
     blur_data = gaussian_filter(data.astype(np.float32), sigma=sigma, truncate=2.0)
     gmin = np.percentile(blur_data[blur_data > 0], 0.1)
     gmax = np.percentile(blur_data[blur_data > 0], 99.9)
@@ -101,9 +100,32 @@ class UnifiedInference:
             if hasattr(self.opt, key):
                 setattr(self.opt, key, value)
         
-        # Set paths
-        self.opt.checkpoints_dir = os.path.dirname(self.config['checkpoint_path'])
-        self.opt.name = os.path.basename(os.path.dirname(self.config['checkpoint_path']))
+        # Set paths - map config name to module directory
+        name_to_module = {
+            'xray2lung': 'lung',
+            'xray2heart': 'heart', 
+            'xray2airwaynan': 'airway',
+            'lung2covid': 'covid',
+            'lung2vessel': 'vessel',
+            'xray2bone': 'bone',
+            'heart_volumetry': 'heart_volumetry',
+            'lung_volumetry': 'lung_volumetry'
+        }
+        
+        module_name = name_to_module.get(self.config['name'], self.config['name'])
+        checkpoint_path = os.path.join("modules", module_name, self.config['checkpoint_path'])
+        
+        self.opt.checkpoint_path = checkpoint_path
+        self.opt.checkpoints_dir = os.path.dirname(checkpoint_path)
+        self.opt.name = self.config['name']
+        
+        # Add missing attributes for pix2pixHD model
+        self.opt.cuda1 = 0
+        self.opt.continue_train = False
+        
+        # Set CPU mode if CUDA not available
+        if not torch.cuda.is_available():
+            self.opt.gpu_ids = []
         
         # Create model
         self.model = create_model(self.opt)
@@ -162,6 +184,14 @@ class UnifiedInference:
             
             lung_nii = nib.load(lung_mask_path)
             lung_mask = lung_nii.get_fdata().astype(np.float32)
+            
+            # Handle multi-dimensional NIfTI files by extracting 2D slice
+            if lung_mask.ndim > 2:
+                # Squeeze extra dimensions and take first slice if needed
+                lung_mask = np.squeeze(lung_mask)
+                if lung_mask.ndim > 2:
+                    lung_mask = lung_mask[:, :, 0]
+            
             lung_mask = (lung_mask > 0).astype(np.float32)
             lung_mask = pad_image(lung_mask, target_size)
             
@@ -176,23 +206,23 @@ class UnifiedInference:
     def run_inference(self, img, lung_mask=None):
         """Run model inference"""
         # Prepare input tensor
-        img_tensor = torch.from_numpy(img).unsqueeze(0).unsqueeze(0).float()
-        
         if self.config.get('requires_lung_mask', False):
-            lung_tensor = torch.from_numpy(lung_mask).unsqueeze(0).unsqueeze(0).float()
-            input_tensor = torch.cat([img_tensor, lung_tensor], dim=1)
+            # For COVID and vessel modules, use the lung mask as the input
+            if lung_mask is None:
+                raise ValueError("Lung mask is required but not provided")
+            input_tensor = torch.from_numpy(lung_mask).unsqueeze(0).unsqueeze(0).float()
         else:
-            input_tensor = img_tensor
+            input_tensor = torch.from_numpy(img).unsqueeze(0).unsqueeze(0).float()
         
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() and len(self.opt.gpu_ids) > 0:
             input_tensor = input_tensor.cuda()
         
         # Run inference
         with torch.no_grad():
-            generated = self.model.inference(input_tensor, None)
+            generated = self.model(input_tensor)
         
         # Convert to numpy
-        output = generated[0].cpu().numpy()
+        output = generated.cpu().numpy()
         
         # Denormalize
         if self.config['normalization_method'] == 'percentile':
@@ -252,8 +282,16 @@ class UnifiedInference:
     
     def save_output(self, output, output_path, dicom_path):
         """Save output as NIfTI file"""
+        # Handle output shape properly
+        if output.ndim == 4:  # (batch, channel, height, width)
+            output_data = output[0, 0]  # Take first batch and channel
+        elif output.ndim == 3:  # (channel, height, width)
+            output_data = output[0]     # Take first channel
+        else:  # (height, width)
+            output_data = output
+        
         # Create NIfTI image
-        nii_img = nib.Nifti1Image(output.transpose(1, 2, 0), np.eye(4))
+        nii_img = nib.Nifti1Image(output_data[:, :, np.newaxis], np.eye(4))
         
         # Save file
         nib.save(nii_img, output_path)
@@ -298,9 +336,9 @@ def main():
                        choices=['lung', 'heart', 'airway', 'covid', 'vessel', 'bone', 
                                'heart_volumetry', 'lung_volumetry'],
                        help='Module to use for inference')
-    parser.add_argument('--input', type=str, required=True,
+    parser.add_argument('--input_file', type=str, required=True,
                        help='Path to input DICOM file')
-    parser.add_argument('--output', type=str, required=True,
+    parser.add_argument('--output_file', type=str, required=True,
                        help='Path to output NIfTI file')
     parser.add_argument('--lung_mask', type=str, default=None,
                        help='Path to lung mask (required for covid/vessel modules)')
@@ -317,7 +355,7 @@ def main():
     
     # Create inference object and process
     inference = UnifiedInference(config_path)
-    results = inference.process(args.input, args.output, args.lung_mask)
+    results = inference.process(args.input_file, args.output_file, args.lung_mask)
     
     print("Processing complete!")
 

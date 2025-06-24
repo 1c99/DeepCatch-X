@@ -74,7 +74,7 @@ def run_test(module, input_file=None):
     output_file = f"test_output_{module}.nii"
     
     # Prepare command
-    cmd = f"python inference.py --module {module} --input {input_file} --output {output_file}"
+    cmd = f"python inference.py --module {module} --input_file {input_file} --output_file {output_file}"
     
     # Add lung mask for modules that need it
     if module in ['covid', 'vessel']:

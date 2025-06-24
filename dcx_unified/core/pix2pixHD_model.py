@@ -211,7 +211,10 @@ class Pix2PixHDModel(BaseModel):
                                       opt.n_blocks_local, opt.norm, opt.upsample, gpu_ids=self.gpu_ids)
 
     def forward(self, x):
-        return self.netG(Variable(x).cuda(self.cuda1))
+        if torch.cuda.is_available() and self.gpu_ids:
+            return self.netG(Variable(x).cuda(self.cuda1))
+        else:
+            return self.netG(Variable(x))
 
 class BuildModel(torch.nn.Module):
     def __init__(self, opt):
