@@ -1,0 +1,11 @@
+name: "xray2heart"
+checkpoint_path: "checkpoints/xray2heart.pth"
+loadSize: 512
+threshold: -1015
+output_range: [-1100, -500]
+calculate_area: true
+use_connected_regions: false
+normalization_method: "percentile"
+percentile_min: 0
+percentile_max: 99
+requires_lung_mask: false

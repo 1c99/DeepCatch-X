@@ -1,0 +1,13 @@
+name: "lung_volumetry"
+checkpoint_path: "checkpoints/xray2lung.pth"
+regression_checkpoint_path: "checkpoints/lungregression.pth"
+loadSize: 512
+threshold: -1015
+output_range: [-1100, -500]
+calculate_area: false
+calculate_volume: true
+use_connected_regions: false
+normalization_method: "percentile"
+percentile_min: 0
+percentile_max: 99
+requires_lung_mask: false

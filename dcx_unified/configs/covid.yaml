@@ -1,0 +1,13 @@
+name: "lung2covid"
+checkpoint_path: "checkpoints/lung2covid.pth"
+loadSize: 2048
+threshold: -950
+output_range: [-1100, -400]
+calculate_area: true
+use_connected_regions: false
+normalization_method: "minmax"
+input_min: -1200
+input_max: 200
+output_min: -550
+output_max: -450
+requires_lung_mask: true
