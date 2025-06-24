@@ -1,0 +1,21 @@
+# Model checkpoints (large binary files)
+*.pth
+*.pt
+
+# Output files
+*.nii
+*.png
+
+# Input DICOM files (may contain sensitive data)
+*.dcm
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
