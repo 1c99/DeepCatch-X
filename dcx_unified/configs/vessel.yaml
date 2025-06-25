@@ -6,9 +6,8 @@ output_range: [-1100, -500]
 calculate_area: false
 use_connected_regions: false
 normalization_method: "minmax"
-input_min: -1200
-input_max: 200
-output_min: -550
-output_max: -450
+input_min: -1100
+input_max: -500
 requires_lung_mask: true
 use_histogram_normalization: true
+interpolation: "LANCZOS"

@@ -1,0 +1,4 @@
+name: "bone_supp_diff"
+module_type: "diffusion"
+checkpoint_path: "../20250320_bonesup_diffusion_inference/bone_supp_diff.pt"
+interpolation: "LANCZOS"

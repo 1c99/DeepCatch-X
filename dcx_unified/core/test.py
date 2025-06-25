@@ -65,11 +65,15 @@ def create_model_v2(opt):
             if 'NVIDIA' in gpu_name:
                 model.cuda(gpu_id)
                 break
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() and len(opt.gpu_ids) > 0:
+        model = model.to('mps')
 
     # model = remove_netG(model, model.state_dict())
-    # Load checkpoint with CPU mapping if CUDA not available
+    # Load checkpoint with appropriate device mapping
     if torch.cuda.is_available():
         state = torch.load(opt.checkpoint_path)
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        state = torch.load(opt.checkpoint_path, map_location=torch.device('mps'))
     else:
         state = torch.load(opt.checkpoint_path, map_location=torch.device('cpu'))
 

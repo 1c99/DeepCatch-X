@@ -1,4 +1,5 @@
 name: "lung_volumetry"
+module_type: "volumetry"
 checkpoint_path: "checkpoints/xray2lung.pth"
 regression_checkpoint_path: "checkpoints/lungregression.pth"
 loadSize: 512
@@ -11,3 +12,4 @@ normalization_method: "percentile"
 percentile_min: 0
 percentile_max: 99
 requires_lung_mask: false
+interpolation: "LANCZOS"

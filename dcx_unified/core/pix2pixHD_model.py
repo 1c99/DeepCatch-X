@@ -213,6 +213,8 @@ class Pix2PixHDModel(BaseModel):
     def forward(self, x):
         if torch.cuda.is_available() and self.gpu_ids:
             return self.netG(Variable(x).cuda(self.cuda1))
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() and self.gpu_ids:
+            return self.netG(Variable(x).to('mps'))
         else:
             return self.netG(Variable(x))
 
