@@ -5,6 +5,8 @@ loadSize: 512
 threshold: -1015
 output_range: [-1100, -500]
 calculate_area: true
+calculate_volume: true
+regression_checkpoint_path: "checkpoints/heartregression.pth"
 use_connected_regions: false
 normalization_method: "percentile"
 percentile_min: 0

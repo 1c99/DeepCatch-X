@@ -1,0 +1,12 @@
+name: "xray2tb"
+module_type: "tb_with_lung_preprocessing"
+checkpoint_path: "checkpoints/efficientnet-b5.pth"
+lung_checkpoint_path: "checkpoints/xray2lung.pth"
+loadSize: 1024
+model_type: "efficientnet"
+calculate_probability: true
+grad_cam: true
+requires_lung_segmentation: true
+# TB requires lung segmentation preprocessing
+preprocessing_pipeline: true
+output_overlay: true

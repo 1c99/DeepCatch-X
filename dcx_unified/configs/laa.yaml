@@ -1,0 +1,12 @@
+name: "xray2laa"
+module_type: "segmentation_models_pytorch_laa"
+checkpoint_path: "checkpoints/laa_model.pth"
+loadSize: 512
+model_type: "efficientnet-b0"
+calculate_area: true
+calculate_volume: false
+# LAA uses UNet with EfficientNet-B0 encoder + auxiliary params
+aux_params: true
+activation: "sigmoid"
+classes: 1
+in_channels: 3

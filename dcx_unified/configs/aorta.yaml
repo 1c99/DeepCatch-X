@@ -1,0 +1,16 @@
+name: "xray2aorta"
+module_type: "basic_segmentation"
+checkpoint_path: "checkpoints/xray2aorta.pth"
+loadSize: 512
+interpolation: "LANCZOS"
+output_min_max: "-1100,-700"
+threshold: -1015
+calculate_area: true
+calculate_volume: false
+# Aorta has 2 output channels: ascending (0) and descending (1)
+output_nc: 2
+netG: "local_spade"
+multi_channel_output: true
+output_channels:
+  - "aorta_asc"
+  - "aorta_desc"

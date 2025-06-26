@@ -5,6 +5,8 @@ loadSize: 2048
 threshold: -1015
 output_range: [-1100, -500]
 calculate_area: true
+calculate_volume: true
+regression_checkpoint_path: "checkpoints/lungregression.pth"
 use_connected_regions: true
 n_regions: 2
 normalization_method: "percentile"

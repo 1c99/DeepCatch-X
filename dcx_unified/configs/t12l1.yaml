@@ -1,0 +1,14 @@
+name: "xray2t12l1"
+module_type: "dual_model_segmentation"
+checkpoint_path: "checkpoints/xray2T12nan.pth"
+checkpoint_path_l1: "checkpoints/xray2L1nan.pth"
+loadSize: 512
+interpolation: "LANCZOS"
+output_min_max: "-1100,-500"
+output_min_max_l1: "-1024,1000"
+threshold: -1015
+calculate_area: true
+calculate_volume: false
+# T12L1 uses two separate models for T12 and L1 vertebrae
+dual_output: true
+output_names: ["T12", "L1"]

@@ -3,7 +3,7 @@ checkpoint_path: "checkpoints/lung2vessel.pth"
 loadSize: 2048
 threshold: -1015
 output_range: [-1100, -500]
-calculate_area: false
+calculate_area: true
 use_connected_regions: false
 normalization_method: "minmax"
 input_min: -1100

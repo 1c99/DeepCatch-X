@@ -1,0 +1,17 @@
+name: "bonenbgsegmentation_t12l1"
+module_type: "dual_segmentation_with_regression"
+checkpoint_path: "checkpoints/xray2T12nan.pth"
+checkpoint_path_l1: "checkpoints/xray2L1nan.pth"
+regression_checkpoint_t12: "checkpoints/BonenanINDVBM12_Regression.pth"
+regression_checkpoint_l1: "checkpoints/BonenanINDVBM13_Regression.pth"
+loadSize: 512
+interpolation: "LANCZOS"
+output_min_max: "-1100,-500"
+output_min_max_l1: "-1024,1000"
+threshold: -1015
+calculate_area: true
+calculate_regression: true
+# Complete pipeline: T12/L1 segmentation + bone density regression
+dual_output: true
+output_names: ["T12", "L1"]
+regression_names: ["T12_HU", "L1_HU"]

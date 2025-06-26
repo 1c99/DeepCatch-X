@@ -1,9 +1,11 @@
 name: "xray2bone"
+module_type: "basic_segmentation"
 checkpoint_path: "checkpoints/xray2bone.pth"
 loadSize: 2048
-threshold: -1015
-output_range: [-1100, -500]
-calculate_area: false
+threshold: -1024
+output_min_max: "-1100,-500"
+calculate_area: true
+calculate_volume: false
 use_connected_regions: true
 n_regions: 2
 normalization_method: "percentile"

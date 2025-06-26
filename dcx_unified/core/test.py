@@ -49,7 +49,12 @@ def remove_netG(model, old_state_dict):
 
 
 def create_model_v2(opt):
-    model = BuildModel(opt)
+    # Check if this is a SPADE model (for aorta)
+    if hasattr(opt, 'netG') and opt.netG == 'local_spade':
+        from pix2pixHD_model_spade import BuildModel as BuildModelSpade
+        model = BuildModelSpade(opt)
+    else:
+        model = BuildModel(opt)
     # if opt.data_parallel:
         # model = torch.nn.DataParallel(model, device_ids=opt.gpu_ids)
     

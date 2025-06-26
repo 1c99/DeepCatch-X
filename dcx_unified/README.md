@@ -22,8 +22,14 @@ dcx_unified/
 │   ├── vessel.yaml
 │   ├── bone.yaml
 │   ├── heart_volumetry.yaml
-│   └── lung_volumetry.yaml
+│   ├── lung_volumetry.yaml
+│   ├── aorta.yaml
+│   ├── t12l1.yaml
+│   ├── laa.yaml
+│   ├── tb.yaml
+│   └── t12l1_regression.yaml
 ├── inference.py            # Unified inference script
+├── postprocessing.py       # Unified postprocessing script
 ├── test_unified.py         # Test script
 └── modules/                # Checkpoints and data (created by test script)
 ```
@@ -42,14 +48,29 @@ python inference.py --module covid --input input.dcm --output output.nii --lung_
 
 ### Available Modules
 
+#### Basic Segmentation
 - **lung**: Lung segmentation
 - **heart**: Heart segmentation  
 - **airway**: Airway segmentation
-- **covid**: COVID-19 detection
-- **vessel**: Vascular segmentation
 - **bone**: Bone segmentation
+- **aorta**: Aorta segmentation (outputs both ascending and descending aorta as separate channels)
+- **t12l1**: T12 and L1 vertebrae segmentation
+
+#### Lung-based Processing
+- **covid**: COVID-19 pattern detection (requires lung mask)
+- **vessel**: Vascular segmentation (requires lung mask)
+
+#### Volumetry (Segmentation + Regression)
 - **heart_volumetry**: Heart segmentation + volume estimation
 - **lung_volumetry**: Lung segmentation + volume estimation
+- **t12l1_regression**: T12/L1 segmentation + bone density regression
+
+#### Diffusion Models
+- **bone_supp**: Bone suppression using diffusion model
+
+#### Alternative Architectures
+- **laa**: Left atrial appendage segmentation (segmentation_models_pytorch)
+- **tb**: Tuberculosis classification (EfficientNet)
 
 ### Modules Requiring Lung Masks
 
@@ -72,6 +93,25 @@ python test_unified.py --module lung
 3. Test all modules:
 ```bash
 python test_unified.py --all
+```
+
+## Postprocessing
+
+The unified system includes postprocessing capabilities for clinical measurements:
+
+### Aorta Maximum Diameter
+```bash
+python postprocessing.py --function aorta_diameter --input1 aorta_segmentation.nii --pixel_spacing 0.18
+```
+
+### Cardiothoracic Ratio
+```bash
+python postprocessing.py --function cardiothoracic_ratio --input1 heart_segmentation.nii --input2 lung_segmentation.nii
+```
+
+### Peripheral Vessel Area
+```bash
+python postprocessing.py --function peripheral_vessels --input1 vessel_segmentation.nii --input2 lung_segmentation.nii --pixel_spacing 0.18
 ```
 
 ## Configuration
