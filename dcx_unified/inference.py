@@ -2242,11 +2242,8 @@ def main():
             
             output_file = os.path.join(args.output_dir, output_filename)
             
-            # Force 2048x2048 output for aorta if diameter calculation is requested
+            # Use requested output size (don't force 2048 for aorta anymore)
             output_size_override = args.output_size
-            if args.diameter and module == 'aorta':
-                output_size_override = '2048'
-                print("📏 Diameter calculation requested - forcing 2048x2048 output for aorta module")
             
             # Create inference object and process
             # Use unified CSV when collect_measurements is enabled
@@ -2454,16 +2451,35 @@ def main():
                     
                     # Track all 2048 files to remove
                     all_2048_files = []
+                    temp_generated_2048 = False
                     
-                    # Check which files exist
+                    # If output size is not 2048, we need to generate temporary 2048 files
+                    if args.output_size != '2048':
+                        print("⚡ Generating temporary 2048x2048 aorta masks for diameter calculation...")
+                        
+                        # Re-run aorta module at 2048 resolution
+                        aorta_config_path = os.path.join(os.path.dirname(__file__), 'configs', 'aorta.yaml')
+                        aorta_inference_2048 = UnifiedDCXInference(aorta_config_path, args.device, args.output_format, '2048', 'aorta')
+                        
+                        # Generate 2048 output with _2048 suffix
+                        aorta_2048_path = os.path.join(args.output_dir, combined_file)
+                        aorta_results_2048 = aorta_inference_2048.process(args.input_file, aorta_2048_path, None)
+                        
+                        temp_generated_2048 = True
+                        print("✓ Temporary 2048x2048 aorta masks generated")
+                    
+                    # Check which files exist after generation
                     if os.path.exists(os.path.join(args.output_dir, asc_file)):
                         diameter_file_dict[input_basename].append(asc_file)
-                        all_2048_files.append(asc_file)
+                        if temp_generated_2048:
+                            all_2048_files.append(asc_file)
                     if os.path.exists(os.path.join(args.output_dir, desc_file)):
                         diameter_file_dict[input_basename].append(desc_file)
-                        all_2048_files.append(desc_file)
+                        if temp_generated_2048:
+                            all_2048_files.append(desc_file)
                     if os.path.exists(os.path.join(args.output_dir, combined_file)):
-                        all_2048_files.append(combined_file)
+                        if temp_generated_2048:
+                            all_2048_files.append(combined_file)
                     
                     if diameter_file_dict[input_basename]:
                         # Create output directory for diameter results
@@ -2471,7 +2487,7 @@ def main():
                         os.makedirs(diameter_output_dir, exist_ok=True)
                         
                         # Run diameter calculation
-                        compute_diameter(
+                        max_diameters = compute_diameter(
                             output_folder=diameter_output_dir,
                             input_folder=args.output_dir,
                             file_dict=diameter_file_dict,
@@ -2482,6 +2498,14 @@ def main():
                         )
                         
                         print("✓ Aorta diameter calculation completed")
+                        
+                        # Save diameter values to all_results for CSV
+                        if max_diameters and 'aorta' in all_results:
+                            if len(max_diameters) >= 2:
+                                all_results['aorta']['aorta_ascending_diameter_mm'] = round(max_diameters[0], 1)
+                                all_results['aorta']['aorta_descending_diameter_mm'] = round(max_diameters[1], 1)
+                            elif len(max_diameters) == 1:
+                                all_results['aorta']['aorta_ascending_diameter_mm'] = round(max_diameters[0], 1)
                         
                         # Remove temporary 2048 files if not originally requested
                         if args.output_size != '2048':
@@ -2787,6 +2811,12 @@ def main():
                         measurements_data['mhtd_mm'] = module_results['mhtd_mm']
                     if 'mhcd_mm' in module_results:
                         measurements_data['mhcd_mm'] = module_results['mhcd_mm']
+                elif module == 'aorta':
+                    # Aorta diameter measurements
+                    if 'aorta_ascending_diameter_mm' in module_results:
+                        measurements_data['aorta_ascending_diameter_mm'] = module_results['aorta_ascending_diameter_mm']
+                    if 'aorta_descending_diameter_mm' in module_results:
+                        measurements_data['aorta_descending_diameter_mm'] = module_results['aorta_descending_diameter_mm']
         
         # Postprocessing removed - focusing on segmentation and regression only
         

@@ -1024,3 +1024,6 @@ def compute_diameter(output_folder, input_folder, file_dict, head, ASCENDING_ONL
     # print("elapsed time: {} seconds".format(round(end_time - start_time, 2)))
     print("--------------------------------------")
     plt.close()
+    
+    # Return the max diameters for use in CSV
+    return max_dists

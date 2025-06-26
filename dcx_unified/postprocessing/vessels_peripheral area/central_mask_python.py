@@ -290,21 +290,23 @@ def save_mask(path, mask, save_path, idx):
 # In[45]:
 
 
-#path = r'C:\Users\user\central_mask\test_control-final36'
-path = r'.\test_control-final36'
-print("path: ".format(path))
-#images = getImages(path)
+# Commented out to prevent execution when imported
+if False:  # Original script execution
+    #path = r'C:\Users\user\central_mask\test_control-final36'
+    path = r'.\test_control-final36'
+    print("path: ".format(path))
+    #images = getImages(path)
 
-for i in os.listdir(path):
-    lung_contour = []
-    nii_path = path+'\\'+str(i)
-    if not nii_path.endswith(".nii"):
-        continue
-    
-    img, lung_contours = find_contours(path+'\\'+str(i))
-    for c in lung_contours:
-        if len(c) > 1000:
-            lung_contour.append(c)
+    for i in os.listdir(path):
+        lung_contour = []
+        nii_path = path+'\\'+str(i)
+        if not nii_path.endswith(".nii"):
+            continue
+        
+        img, lung_contours = find_contours(path+'\\'+str(i))
+        for c in lung_contours:
+            if len(c) > 1000:
+                lung_contour.append(c)
     
     '''
     #      
@@ -340,35 +342,36 @@ for i in os.listdir(path):
         print("save_mask: {}".format(path+'\\'+str(i)+str(p)))
         #save_mask(path+'\\'+str(i), mask[:,:,0], save_path, str(p))
 
-    exit(0)
+    #exit(0)
 
 
 # In[47]:
 
+# Commented out to prevent execution when imported
+if False:
+    path = r'test_ipah_final34'
+    for i in os.listdir(path):
+        lung_contour = []
+        img, lung_contours = find_contours(path+'\\'+str(i))
+        
+        for c in lung_contours:
+            if len(c) > 1000:   # constant
+                lung_contour.append(c)
+                
+        if len(lung_contour) == 1:
+            center = center_point_one(lung_contour)
+            masks = full_mask(center, lung_contour)
+        else:
+            center = center_point(lung_contour)
+            masks = full_mask(center, lung_contour)
 
-path = r'test_ipah_final34'
-for i in os.listdir(path):
-    lung_contour = []
-    img, lung_contours = find_contours(path+'\\'+str(i))
-    
-    for c in lung_contours:
-        if len(c) > 1000:   # constant
-            lung_contour.append(c)
+        save_path = path + '\\' + str(i)[:-4]
+        os.mkdir(save_path)
+        for p in [0.5, 0.7]:
+            mask, masked = bitwise_mask(img, masks, center, p)
+            save_mask(path+'\\'+str(i), mask[:,:,0], save_path, str(p))
             
-    if len(lung_contour) == 1:
-        center = center_point_one(lung_contour)
-        masks = full_mask(center, lung_contour)
-    else:
-        center = center_point(lung_contour)
-        masks = full_mask(center, lung_contour)
-
-    save_path = path + '\\' + str(i)[:-4]
-    os.mkdir(save_path)
-    for p in [0.5, 0.7]:
-        mask, masked = bitwise_mask(img, masks, center, p)
-        save_mask(path+'\\'+str(i), mask[:,:,0], save_path, str(p))
-        
-        
+            
     
 
 
