@@ -63,6 +63,7 @@ def find_delta_epsilon(alpha, gamma, a, b, c):
 
 #     print(alpha_inf, gamma_inf)
     return np.real(alpha) - closest_x, np.real(gamma) - closest_y
+
 def delta_partial_a(delta, alpha, gamma, a, b, c):
     x_ = (alpha-delta)
     _epsilon = a * x_**2 + b*x_ + c - gamma

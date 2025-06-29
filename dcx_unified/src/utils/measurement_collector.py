@@ -166,13 +166,15 @@ class MeasurementCollector:
         except Exception as e:
             print(f"Could not collect file metadata: {e}")
     
-    def save_to_csv(self, csv_filename='dcx_measurements.csv'):
+    def save_to_csv(self, csv_filename=None):
         """Save all measurements to CSV file"""
+        if csv_filename is None:
+            # Use input filename as base for CSV
+            base_name = os.path.splitext(self.dicom_filename)[0]
+            csv_filename = f"{base_name}.csv"
         csv_path = os.path.join(self.output_dir, csv_filename)
         
-        # Check if CSV exists to determine if we need headers
-        file_exists = os.path.exists(csv_path)
-        
+        # Always overwrite the file to avoid column mismatches
         # Define column order for better organization
         priority_columns = [
             'patient_id', 'processing_date', 'dicom_file',
@@ -184,14 +186,12 @@ class MeasurementCollector:
         remaining_keys = sorted(all_keys - set(priority_columns))
         ordered_keys = priority_columns + remaining_keys
         
-        # Write to CSV
-        mode = 'a' if file_exists else 'w'
-        with open(csv_path, mode, newline='', encoding='utf-8') as csvfile:
+        # Write to CSV (always overwrite to ensure consistent columns)
+        with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=ordered_keys)
             
-            # Write header if file is new
-            if not file_exists:
-                writer.writeheader()
+            # Write header
+            writer.writeheader()
             
             # Write measurements
             writer.writerow(self.measurements)
@@ -245,8 +245,8 @@ def create_comprehensive_csv(output_dir, dicom_filename, measurements_data=None)
     # Collect from existing files
     collector.collect_from_files()
     
-    # Save to CSV
-    csv_path = collector.save_to_csv()
+    # Save to CSV with input filename
+    csv_path = collector.save_to_csv()  # This will use the input filename
     
     # Print summary
     summary = collector.get_summary()

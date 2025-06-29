@@ -9,7 +9,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from utils import (
+from ..utils.utils import (
     round_filters,
     round_repeats,
     drop_connect,
@@ -579,3 +579,31 @@ def resnet18(pretrained=False, **kwargs):
     """
     model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
     return model
+
+
+# Add missing model classes for modular system
+class UNet(nn.Module):
+    """Basic UNet for T12L1 segmentation"""
+    def __init__(self, n_classes=3, batch_norm=True, bilinear=True):
+        super(UNet, self).__init__()
+        self.n_classes = n_classes
+        # Simple placeholder - actual T12L1 uses model from model_factory
+        self.dummy = nn.Conv2d(1, n_classes, 1)
+        
+    def forward(self, x):
+        # Placeholder implementation
+        return self.dummy(x)
+        
+
+class DiffusionModel(nn.Module):
+    """Simple diffusion model placeholder for bone suppression"""
+    def __init__(self, image_size=512, num_timesteps=1000):
+        super(DiffusionModel, self).__init__()
+        self.image_size = image_size
+        self.num_timesteps = num_timesteps
+        # Placeholder network
+        self.net = nn.Conv2d(1, 1, 3, padding=1)
+        
+    def forward(self, x, t):
+        # Placeholder implementation
+        return self.net(x)

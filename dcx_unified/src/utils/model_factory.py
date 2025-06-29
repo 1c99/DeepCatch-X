@@ -1,6 +1,6 @@
 import os
-from pix2pixHD_model import BuildModel
-from data_loader import CustomDatasetDataLoader
+from ..models.pix2pixHD_model import BuildModel
+from .data_loader import CustomDatasetDataLoader
 import torch
 # Only initialize CUDA if available
 if torch.cuda.is_available():
@@ -51,7 +51,7 @@ def remove_netG(model, old_state_dict):
 def create_model_v2(opt):
     # Check if this is a SPADE model (for aorta)
     if hasattr(opt, 'netG') and opt.netG == 'local_spade':
-        from pix2pixHD_model_spade import BuildModel as BuildModelSpade
+        from ..models.pix2pixHD_model_spade import BuildModel as BuildModelSpade
         model = BuildModelSpade(opt)
     else:
         model = BuildModel(opt)

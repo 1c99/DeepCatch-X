@@ -17,17 +17,15 @@ import torchvision.transforms as transforms
 from scipy.ndimage import gaussian_filter
 import glob
 import cv2
+from datetime import datetime
 
 # Add core directory to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'core'))
 
-from base_options import BaseOptions
-from core.test import create_model_v2 as create_model
+from src.utils.base_options import BaseOptions
+from src.utils.model_factory import create_model_v2 as create_model
 
 
-# ============================================================================
-# GROUP 1: BASIC SEGMENTATION (heart, lung, airway, bone)
-# ============================================================================
 
 def resize_keep_ratio_pil(img_pil, target_size, interpolation="LANCZOS"):
     """Resize PIL image while keeping aspect ratio (Group 1)"""
@@ -91,11 +89,6 @@ def get_biggest_connected_region(gen_lung, n_region=2):
             biggest_regions += labels == ind
     return biggest_regions
 
-
-# ============================================================================
-# GROUP 2: LUNG-BASED WITH TRANSFORMS (covid, vessel)
-# ============================================================================
-
 def histogram_normalization(arr):
     """Histogram normalization for vessel module (Group 2)"""
     try:
@@ -121,10 +114,6 @@ def histogram_normalization(arr):
     except:
         return arr
 
-
-# ============================================================================
-# GROUP 4: DIFFUSION MODEL (bone_supp)
-# ============================================================================
 
 def adjust_size(image, N):
     """Adjust image size for diffusion model (Group 4)"""
@@ -155,7 +144,6 @@ def remove_padding(image, padding):
     H_original = H_padded - pad_bottom
     W_original = W_padded - pad_right
     return image[:, :, :H_original, :W_original]
-
 
 def ddim_sample(model, condition, device='cuda'):
     """DDIM sampling for diffusion model (Group 4)"""
@@ -192,13 +180,8 @@ def ddim_sample(model, condition, device='cuda'):
 
     return x
 
-
-# ============================================================================
-# UNIFIED INFERENCE CLASS
-# ============================================================================
-
 class UnifiedDCXInference:
-    def __init__(self, config_path, device_override=None, output_format='nii', output_size='512', module_name=None, unified_csv=False, batch_mode=False, ctr_requested=False):
+    def __init__(self, config_path, device_override=None, output_format='nii', output_size='512', module_name=None, unified_csv=False, batch_mode=False):
         # Load configuration
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
@@ -211,9 +194,6 @@ class UnifiedDCXInference:
         
         # Track if we're in batch mode (for lung+covid+vessel processing)
         self.batch_mode = batch_mode
-        
-        # Track if CTR calculation is requested (to create 512 heart mask)
-        self.ctr_requested = ctr_requested
         
         self.module_type = self.config.get('module_type', 'basic_segmentation')
         self.output_format = output_format
@@ -324,7 +304,7 @@ class UnifiedDCXInference:
     
     def _init_diffusion_model(self):
         """Initialize diffusion model (Group 4)"""
-        from eff_unet_shuffle import EfficientUNet
+        from src.models.eff_unet_shuffle import EfficientUNet
         
         checkpoint_path = self.config['checkpoint_path']
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
@@ -344,10 +324,10 @@ class UnifiedDCXInference:
         input_feature = checkpoint.get('input_feature', 'x,y')
         
         if 'heart' in self.config['name']:
-            from core.heartregression_model import UNetRFull
+            from src.models.heartregression_model import UNetRFull
             self.regression_model = UNetRFull(n_channels=1, n_classes=n_classes, args=input_feature, isHeart=True)
         else:
-            from core.lungregression_model import UNetRFull
+            from src.models.lungregression_model import UNetRFull
             self.regression_model = UNetRFull(n_channels=1, n_classes=n_classes, args=input_feature, isHeart=False)
         
         self.regression_model.load_state_dict(checkpoint['weight'])
@@ -371,7 +351,7 @@ class UnifiedDCXInference:
     
     def _init_efficientnet_model(self):
         """Initialize EfficientNet classification model (TB)"""
-        from model import EfficientNet
+        from src.models.model import EfficientNet
         
         model_name = self.config.get('model_type', 'efficientnet-b5')
         checkpoint_path = self.config['checkpoint_path']
@@ -437,7 +417,7 @@ class UnifiedDCXInference:
         self._init_dual_model_segmentation()
         
         # Load regression models
-        from heartregression_model import UNetRFull
+        from src.models.heartregression_model import UNetRFull
         
         # Load T12 regression model with correct args from checkpoint
         t12_reg_path = self.config['regression_checkpoint_t12']
@@ -767,12 +747,46 @@ class UnifiedDCXInference:
                 print("⚠ Volume calculation skipped - regression model not loaded")
                 volume = None
         
-        # Process COVID and vessel modules using in-memory lung data if in batch mode
+        # No longer process COVID and vessel automatically with lung
+        # They are now separate modules
         covid_results = vessel_results = None
-        if self.batch_mode and self.config.get('name') == 'xray2lung':
-            covid_results, vessel_results = self._process_lung_dependent_modules(
-                output_full, dicom_path, output_path, pixel_spacing, ratio
+        if False:  # Disabled - COVID and vessel are now separate modules
+            output_dir = os.path.dirname(output_path)
+            input_basename = os.path.splitext(os.path.basename(dicom_path))[0]
+            temp_lung_created = False
+            
+            # COVID and vessel need 2048x2048 lung mask
+            if self.output_size == '2048' and self.output_format == 'nii':
+                # Already have 2048 NIfTI
+                lung_nii_path = os.path.join(output_dir, f"{input_basename}_lung.nii")
+            else:
+                # Need to create/use temporary 2048 NIfTI
+                lung_nii_path = os.path.join(output_dir, f"{input_basename}_lung_temp2048.nii")
+                
+                if not os.path.exists(lung_nii_path):
+                    print("📦 Creating 2048x2048 lung.nii for COVID/vessel processing...")
+                    # Resize to 2048 if needed
+                    if output_full[0, 0].shape[0] != 2048:
+                        output_2048 = self._resize_output_to_size(output_full, 2048)
+                    else:
+                        output_2048 = output_full
+                    # Force save as NIfTI for COVID/vessel processing
+                    original_format = self.output_format
+                    self.output_format = 'nii'
+                    self._save_output(output_2048, lung_nii_path, pixel_spacing, ratio)
+                    self.output_format = original_format
+                    temp_lung_created = True
+            
+            # Use file-based processing
+            print("🔍 Using lung mask file for COVID/vessel processing")
+            covid_results, vessel_results = self._process_lung_dependent_modules_from_file(
+                dicom_path, lung_nii_path, output_dir
             )
+            
+            # Clean up temporary file if created
+            if temp_lung_created and os.path.exists(lung_nii_path):
+                os.remove(lung_nii_path)
+                print("🗑️  Removed temporary lung file")
         
         results = {'output': output_full, 'mask': mask, 'area': area, 'volume': volume}
         if covid_results:
@@ -817,9 +831,8 @@ class UnifiedDCXInference:
         if not lung_mask_path:
             raise ValueError(f"Module {self.config['name']} requires lung mask")
         
-        # Load lung NIfTI
-        nii_image = nib.load(lung_mask_path)
-        image_array = nii_image.get_fdata()
+        # Load lung mask (supports NIfTI, DICOM, PNG)
+        image_array = self._load_segmentation_file(lung_mask_path)
         
         # Handle multi-dimensional arrays
         if image_array.shape[-2:] == (1, 1):
@@ -1070,26 +1083,25 @@ class UnifiedDCXInference:
         
         print(f"Output saved to: {output_path}")
         
-        # Create 512x512 version for CTR calculation only for heart when CTR is requested
-        # (CTR expects 2048x2048 lung, 512x512 heart)
-        if self.module_name == 'heart' and self.output_size != '512' and self.ctr_requested:
-            self._save_512_version_for_ctr(output, output_path, pixel_spacing, ratio)
+        # No longer automatically create 512x512 version for CTR
+        # CTR is now a separate module that will handle its own requirements
     
     def _save_512_version_for_ctr(self, output, original_path, pixel_spacing, ratio):
         """Save a 512x512 version of heart mask for CTR calculation"""
         # Resize to 512x512
         output_512 = self._resize_output_to_size(output, 512)
         
-        # Create filename with _512 suffix
+        # Create filename with _temp512 suffix - always save as NIfTI for CTR regardless of output format
         dir_path = os.path.dirname(original_path)
         basename = os.path.basename(original_path)
         name_parts = os.path.splitext(basename)
         
-        # Remove any existing size suffix and add _512
+        # Remove any existing size suffix and add _temp512
         base_name = name_parts[0]
         if base_name.endswith('_2048'):
             base_name = base_name[:-5]  # Remove _2048
-        output_filename_512 = f"{base_name}_512{name_parts[1]}"
+        # Always use .nii extension for CTR postprocessing
+        output_filename_512 = f"{base_name}_temp512.nii"
         output_path_512 = os.path.join(dir_path, output_filename_512)
         
         # Save as NIfTI (CTR expects NIfTI files)
@@ -1228,6 +1240,10 @@ class UnifiedDCXInference:
         # Get 2D array from 4D segmentation output
         output_2d = output[0, 0]  # Extract 2D array
         
+        # Transpose for COVID and vessel modules (lung-based modules)
+        if self.module_name in ['covid', 'vessel']:
+            output_2d = np.transpose(output_2d)
+        
         # Normalize to 0-255 range for PNG
         output_min, output_max = output_2d.min(), output_2d.max()
         if output_max > output_min:
@@ -1267,53 +1283,26 @@ class UnifiedDCXInference:
         else:
             raise ValueError(f"Unsupported file format: {file_ext}")
     
-    def _process_lung_dependent_modules(self, lung_output, dicom_path, lung_output_path, pixel_spacing, ratio):
-        """Process COVID and vessel modules using in-memory lung data"""
+    def _process_lung_dependent_modules_from_file(self, dicom_path, lung_nii_path, output_dir):
+        """Process COVID and vessel modules using lung mask file - faster approach"""
         covid_results = vessel_results = None
+        input_basename = os.path.splitext(os.path.basename(dicom_path))[0]
         
         # Process COVID module
         print(f"\n{'='*60}")
-        print("Processing module: covid (using in-memory lung data)")
+        print("Processing module: covid (using lung mask file)")
         print(f"{'='*60}")
         
         try:
+            # Run COVID with lung mask
             covid_config_path = os.path.join(os.path.dirname(__file__), 'configs', 'covid.yaml')
             covid_inference = UnifiedDCXInference(covid_config_path, self.device, self.output_format, self.output_size)
-            covid_inference.batch_mode = True  # Ensure temporary NIfTI files are created
             
-            # BUGFIX: Pass original DICOM shape and path to COVID/vessel modules
-            if hasattr(self, '_original_dicom_shape'):
-                covid_inference._original_dicom_shape = self._original_dicom_shape
-            if hasattr(self, '_original_dicom_path'):
-                covid_inference._original_dicom_path = self._original_dicom_path
+            covid_output_path = os.path.join(output_dir, f"{input_basename}_covid.{self.output_format}")
+            covid_results = covid_inference.process(dicom_path, covid_output_path, lung_nii_path)
             
-            # Transform lung data for COVID processing
-            lung_array = lung_output[0, 0]  # Extract 2D array
-            
-            # Apply COVID-specific preprocessing (no histogram normalization for COVID)
-            lung_array = self._apply_lung_transforms(lung_array)
-            
-            # Run COVID inference
-            covid_output = self._run_covid_vessel_inference(lung_array, covid_inference)
-            
-            # Apply transpose for proper orientation (like other modules)
-            covid_output = np.transpose(covid_output, axes=[0, 1, 3, 2])
-            
-            # Save COVID output
-            output_dir = os.path.dirname(lung_output_path)
-            input_basename = os.path.splitext(os.path.basename(dicom_path))[0]
-            size_suffix = "_2048" if self.output_size == '2048' else ""
-            covid_output_path = os.path.join(output_dir, f"{input_basename}_covid{size_suffix}.{self.output_format}")
-            
-            covid_inference._save_output(covid_output, covid_output_path, pixel_spacing, ratio)
-            
-            # Calculate area
-            covid_mask = covid_output[0, 0] > -1015  # COVID threshold
-            covid_area = covid_inference._calculate_area(covid_mask, pixel_spacing, ratio) if covid_inference.config.get('calculate_area') else None
-            if covid_area:
-                print(f"COVID Area: {covid_area:.2f} cm²")
-            
-            covid_results = {'output': covid_output, 'mask': covid_mask, 'area': covid_area}
+            if 'area' in covid_results:
+                print(f"COVID Area: {covid_results['area']:.2f} cm²")
             print("✓ Module covid completed successfully")
             
         except Exception as e:
@@ -1322,49 +1311,19 @@ class UnifiedDCXInference:
         
         # Process vessel module
         print(f"\n{'='*60}")
-        print("Processing module: vessel (using in-memory lung data)")
+        print("Processing module: vessel (using lung mask file)")
         print(f"{'='*60}")
         
         try:
+            # Run vessel with lung mask
             vessel_config_path = os.path.join(os.path.dirname(__file__), 'configs', 'vessel.yaml')
             vessel_inference = UnifiedDCXInference(vessel_config_path, self.device, self.output_format, self.output_size)
-            vessel_inference.batch_mode = True  # Ensure temporary NIfTI files are created
             
-            # BUGFIX: Pass original DICOM shape and path to vessel module
-            if hasattr(self, '_original_dicom_shape'):
-                vessel_inference._original_dicom_shape = self._original_dicom_shape
-            if hasattr(self, '_original_dicom_path'):
-                vessel_inference._original_dicom_path = self._original_dicom_path
+            vessel_output_path = os.path.join(output_dir, f"{input_basename}_vessel.{self.output_format}")
+            vessel_results = vessel_inference.process(dicom_path, vessel_output_path, lung_nii_path)
             
-            # Transform lung data for vessel processing
-            lung_array = lung_output[0, 0]  # Extract 2D array
-            
-            # Apply vessel-specific preprocessing (WITH histogram normalization for vessel)
-            lung_array = self._apply_lung_transforms(lung_array)
-            lung_array = histogram_normalization(lung_array)  # Vessel-specific step
-            
-            # Run vessel inference
-            vessel_output = self._run_covid_vessel_inference(lung_array, vessel_inference)
-            
-            # Apply transpose for proper orientation (like other modules)
-            vessel_output = np.transpose(vessel_output, axes=[0, 1, 3, 2])
-            
-            # Save vessel output
-            size_suffix = "_2048" if self.output_size == '2048' else ""
-            vessel_output_path = os.path.join(output_dir, f"{input_basename}_vessel{size_suffix}.{self.output_format}")
-            vessel_inference._save_output(vessel_output, vessel_output_path, pixel_spacing, ratio)
-            
-            # Calculate area
-            vessel_mask = vessel_output[0, 0] > -1015  # Vessel threshold
-            vessel_area = vessel_inference._calculate_area(vessel_mask, pixel_spacing, ratio) if vessel_inference.config.get('calculate_area') else None
-            if vessel_area:
-                print(f"Vessel Area: {vessel_area:.2f} cm²")
-            
-            # Calculate peripheral vessel measurements using lung and vessel data
-            peripheral_measurements = self._calculate_peripheral_vessels(vessel_output, lung_output, pixel_spacing)
-            
-            vessel_results = {'output': vessel_output, 'mask': vessel_mask, 'area': vessel_area}
-            vessel_results.update(peripheral_measurements)
+            if 'area' in vessel_results:
+                print(f"Vessel Area: {vessel_results['area']:.2f} cm²")
             print("✓ Module vessel completed successfully")
             
         except Exception as e:
@@ -1615,12 +1574,19 @@ class UnifiedDCXInference:
         base_name = os.path.splitext(os.path.basename(output_path))[0]
         
         # Remove the module suffix if it exists to get original filename
-        if base_name.endswith('_aorta_2048'):
+        if base_name.endswith('_aorta_temp2048'):
+            # For temporary 2048 files, remove the entire suffix and we'll add _temp2048 after channel name
+            original_name = base_name.replace('_aorta_temp2048', '')  # Remove '_aorta_temp2048'
+            is_temp2048 = True
+        elif base_name.endswith('_aorta_2048'):
             original_name = base_name[:-11].rstrip('_')  # Remove '_aorta_2048' and trailing underscores
+            is_temp2048 = False
         elif base_name.endswith('_aorta'):
             original_name = base_name[:-6].rstrip('_')  # Remove '_aorta' and trailing underscores
+            is_temp2048 = False
         else:
             original_name = base_name
+            is_temp2048 = False
         
         for i, channel_name in enumerate(output_channels):
             if i >= output_full.shape[1]:
@@ -1646,10 +1612,13 @@ class UnifiedDCXInference:
             pixel_size_resize_w = pixel_spacing[0] / ratio
             nii.header['pixdim'] = pixel_size_resize_w
             
-            # Create channel filename with correct extension and size suffix
+            # Create channel filename with correct extension
             extension = self.output_format
-            size_suffix = "_2048" if self.output_size == '2048' else ""
-            channel_path = os.path.join(output_dir, f"{original_name}_{channel_name}{size_suffix}.{extension}")
+            if is_temp2048:
+                # Put _temp2048 at the end for consistency
+                channel_path = os.path.join(output_dir, f"{original_name}_{channel_name}_temp2048.{extension}")
+            else:
+                channel_path = os.path.join(output_dir, f"{original_name}_{channel_name}.{extension}")
             
             # Use standard save method to support all formats
             self._save_output(channel_output, channel_path, pixel_spacing, ratio)
@@ -1904,10 +1873,48 @@ class UnifiedDCXInference:
         lung_binary = np.where(lung_final > 0.05, 1, 0)
         dcm_segmented = dcm_final * lung_binary
         
-        # Prepare for TB model input
+        # TB is primarily a classification task
+        # Only save visualization image for PNG format
+        if self.output_format == 'png':
+            # Save the lung-segmented image with correct orientation
+            # The lung mask was transformed (rotated 90 clockwise + flipped horizontally)
+            # but the DICOM is in original orientation
+            # We need to transform the DICOM to match the lung mask first,
+            # then transform the combined result back to original orientation
+            
+            # First, transform DICOM to match the transformed lung mask
+            dcm_transformed = dcm_final.copy()
+            dcm_transformed = cv2.rotate(dcm_transformed, cv2.ROTATE_90_CLOCKWISE)
+            dcm_transformed = cv2.flip(dcm_transformed, 1)
+            
+            # Apply the mask (both are now in the same transformed orientation)
+            dcm_segmented_transformed = dcm_transformed * lung_binary
+            
+            # Now transform the combined result back to original orientation
+            # Inverse transformations: flip horizontally first, then rotate 90 counter-clockwise
+            dcm_for_save = dcm_segmented_transformed.copy()
+            dcm_for_save = cv2.flip(dcm_for_save, 1)  # Flip horizontally (inverse of flip)
+            dcm_for_save = cv2.rotate(dcm_for_save, cv2.ROTATE_90_COUNTERCLOCKWISE)  # Rotate back
+            
+            # Save with proper orientation
+            segmented_for_save = (dcm_for_save * 255).astype(np.uint8)
+            # Resize to output size if needed
+            if hasattr(self, 'output_size') and self.output_size != '2048':
+                target_size = int(self.output_size) if self.output_size != 'original' else max(ds.pixel_array.shape)
+                segmented_pil = Image.fromarray(segmented_for_save)
+                segmented_pil = segmented_pil.resize((target_size, target_size), Image.LANCZOS)
+                segmented_for_save = np.array(segmented_pil)
+            Image.fromarray(segmented_for_save).save(output_path)
+            print(f"TB lung-segmented image saved to: {output_path}")
+        else:
+            # For NIfTI and DICOM formats, skip image saving as TB is a classification task
+            print(f"TB classification completed. No image output for {self.output_format} format (classification only)")
+        
+        # Prepare for TB model input (continue with transformed version)
         dcm_segmented = np.stack((dcm_segmented,) * 3, axis=-1)
         dcm_segmented = np.clip(dcm_segmented, 0, 1).astype(np.float64)
         dcm_segmented = cv2.resize(dcm_segmented, dsize=(1024, 1024), interpolation=cv2.INTER_LINEAR)
+        
         dcm_segmented = dcm_segmented[np.newaxis, ...]  # Add batch dimension
         
         # Convert to tensor and run TB inference
@@ -1920,13 +1927,18 @@ class UnifiedDCXInference:
             tb_probabilities = torch.softmax(tb_output, dim=1)
             tb_probability = tb_probabilities[0, 1].item()  # Take TB class probability
         
-        # Clean up temporary files only if we created them (not existing lung files)
-        if not os.path.exists(existing_lung_path) and os.path.exists(temp_lung_path):
+        # Clean up temporary files only if we created them
+        # Check if temp_lung_path is different from existing_lung_path (means we created a temp file)
+        if temp_lung_path != existing_lung_path and os.path.exists(temp_lung_path) and '_temp_lung' in temp_lung_path:
             os.remove(temp_lung_path)
+            print(f"Cleaned up temporary lung file: {temp_lung_path}")
         
         print(f"TB Probability: {tb_probability:.4f}")
         
-        return {'probability': tb_probability, 'prediction': tb_probability > 0.5}
+        # Return consistent with other modules - include the output even though it's already saved
+        # This ensures proper handling in the main processing flow
+        return {'probability': tb_probability, 'prediction': tb_probability > 0.5, 
+                'output': None, 'mask': None}  # TB doesn't return mask data since it saves directly
     
     def _process_laa_model(self, dicom_path, output_path):
         """Process LAA segmentation (DCX_python_inference exact)"""
@@ -2134,7 +2146,314 @@ class UnifiedDCXInference:
         return scaled_img
     
 
-# Postprocessing functions removed - focusing on segmentation and regression only
+def process_ctr_module(input_file, output_dir, input_basename, all_results):
+    """Process CTR (Cardiothoracic Ratio) calculation"""
+    import sys
+    import os
+    import cv2
+    import numpy as np
+    import nibabel as nib
+    import pydicom
+    
+    try:
+        # Check if required masks exist
+        lung_2048_path = os.path.join(output_dir, f"{input_basename}_lung.nii")
+        heart_512_path = os.path.join(output_dir, f"{input_basename}_heart.nii")
+        
+        if not os.path.exists(lung_2048_path):
+            raise Exception("CTR requires lung mask. Please run lung module first with --output_size 2048 --output_format nii")
+        if not os.path.exists(heart_512_path):
+            raise Exception("CTR requires heart mask. Please run heart module first with --output_size 512 --output_format nii")
+        
+        # Import CTR calculation function
+        sys.path.append(os.path.join(os.path.dirname(__file__), 'src', 'insights'))
+        from cardiothoracic_ratio import (find_contours, center_point, center_point_one, 
+                                          full_mask, bitwise_mask, get_longest_line)
+        import cardiothoracic_ratio
+        
+        # Read DICOM for metadata
+        data = pydicom.dcmread(input_file)
+        pixel_spacing = data.PixelSpacing if 'PixelSpacing' in data else [0.144, 0.144]
+        height = data.Rows
+        width = data.Columns
+        
+        # Process lung contours
+        lung_contour = []
+        img, lung_contours = find_contours(lung_2048_path)
+        
+        # Set global img variable for cardiothoracic_ratio module
+        cardiothoracic_ratio.img = img
+        
+        for c in lung_contours:
+            if len(c) > 1000:
+                lung_contour.append(c)
+        
+        if len(lung_contour) == 0:
+            raise Exception("No lung contours found for CTR calculation")
+        
+        # Calculate lung center and measurements
+        if len(lung_contour) == 1:
+            center = center_point_one(lung_contour)
+            masks = full_mask(center, lung_contour)
+        else:
+            center = center_point(lung_contour)
+            masks = full_mask(center, lung_contour)
+        
+        mask, masked = bitwise_mask(img, masks, center, 1.0)
+        mask = mask[:,:,0]
+        
+        # Find MHTD (Maximum Horizontal Thoracic Diameter)
+        maxCount = 0
+        maxY = -1
+        for y in range(mask.shape[0]):
+            count = cv2.countNonZero(mask[y, :])
+            if count > maxCount:
+                maxCount = count
+                maxY = y
+        
+        startX = -1
+        endX = -1
+        for x in range(mask.shape[1]):
+            if mask[maxY, x] == 255:
+                if startX == -1:
+                    startX = x
+                endX = x
+        
+        MHTD = (endX - startX) * pixel_spacing[0]
+        center = startX + ((endX - startX) / 2)
+        
+        # Process heart (512x512 -> repeated to 2048x2048)
+        heart_img = nib.load(heart_512_path)
+        heart_data = heart_img.get_fdata()
+        heart_data = np.squeeze(heart_data)
+        heart_data = np.transpose(heart_data, (1, 0))
+        heart_data = np.repeat(heart_data, 4, axis=0)
+        heart_data = np.repeat(heart_data, 4, axis=1)
+        
+        # Find MHCD (Maximum Horizontal Cardiac Diameter)
+        left_heart = heart_data[:, :int(center)]
+        right_heart = heart_data[:, int(center):]
+        
+        left_longest_line = get_longest_line(left_heart, center, 2048)
+        right_longest_line = get_longest_line(right_heart, 2048-center, 2048)
+        
+        left_length = left_longest_line[1][0] - left_longest_line[0][0]
+        right_length = right_longest_line[1][0] - right_longest_line[0][0]
+        MHCD = left_length + right_length
+        
+        # Calculate CTR
+        newSize = 2048
+        newSpacingX = pixel_spacing[0] * max(width, height) / newSize
+        ct_ratio = (MHCD * newSpacingX) / MHTD
+        
+        # Print results
+        print(f"\n✓ CTR calculation completed")
+        print(f"\n=== Cardiothoracic Ratio Results ===")
+        print(f"MHTD: {MHTD:.2f} mm")
+        print(f"MHCD: {MHCD * newSpacingX:.2f} mm")
+        print(f"CT Ratio: {ct_ratio:.3f}")
+        print(f"Interpretation: {'Normal (<0.50)' if ct_ratio < 0.50 else 'Borderline (0.50-0.55)' if ct_ratio <= 0.55 else 'Enlarged (>0.55)'}")
+        
+        # Update results for CSV
+        all_results['ctr'] = {
+            'cardiothoracic_ratio': ct_ratio,
+            'mhtd_mm': MHTD,
+            'mhcd_mm': MHCD * newSpacingX
+        }
+        
+        # Clean up temporary PNG files created by find_contours
+        lung_base = lung_2048_path[:-4]  # Remove .nii extension
+        temp_files = [
+            f"{lung_base}.png",
+            f"{lung_base}_mask(binary).png",
+            f"{lung_base}_contour.png",
+            f"{lung_base}_fullMask.png"
+        ]
+        for temp_file in temp_files:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+                
+    except Exception as e:
+        print(f"✗ CTR calculation failed: {str(e)}")
+        all_results['ctr'] = {'error': str(e)}
+
+def process_peripheral_module(input_file, output_dir, input_basename, output_format, all_results):
+    """Process peripheral lung mask generation"""
+    import sys
+    import os
+    import numpy as np
+    import pydicom as dicom
+    import glob
+    
+    try:
+        # Check if lung mask exists
+        lung_2048_path = os.path.join(output_dir, f"{input_basename}_lung.nii")
+        
+        if not os.path.exists(lung_2048_path):
+            raise Exception("Peripheral masks require lung mask. Please run lung module first with --output_size 2048 --output_format nii")
+        
+        # Import the peripheral mask functions
+        sys.path.append(os.path.join(os.path.dirname(__file__), 'src', 'insights'))
+        from peripheral_area import find_contours, center_point, center_point_one, full_mask, bitwise_mask
+        import peripheral_area
+        
+        # Process lung mask to generate peripheral masks
+        img_color, lung_contours = find_contours(lung_2048_path)
+        peripheral_area.img = img_color
+        
+        # Filter contours (keep only significant ones > 1000 pixels)
+        lung_contour = []
+        for c in lung_contours:
+            if len(c) > 1000:
+                lung_contour.append(c)
+        
+        if len(lung_contour) == 0:
+            raise Exception("No lung contours found for peripheral mask generation")
+        
+        # Calculate center point
+        if len(lung_contour) == 1:
+            center = center_point_one(lung_contour)
+        else:
+            center = center_point(lung_contour)
+        
+        # Generate full mask
+        masks = full_mask(center, lung_contour)
+        
+        # Generate masks at different percentages
+        masks_dict = {}
+        for p in [0.5, 0.7]:
+            mask, masked = bitwise_mask(img_color, masks, center, p)
+            masks_dict[p] = mask[:,:,0]
+        
+        # Calculate areas using pixel spacing from DICOM
+        ds = dicom.dcmread(input_file, force=True)
+        pixel_spacing = ds.get((0x0028, 0x0030), [0.18, 0.18])
+        if isinstance(pixel_spacing, (int, float)):
+            pixel_spacing = [pixel_spacing, pixel_spacing]
+        
+        # Get the resize ratio for 2048x2048 processing
+        original_shape = ds.pixel_array.shape
+        ratio = float(2048) / max(original_shape)
+        
+        # Adjust pixel spacing for the resized 2048x2048 image
+        adjusted_pixel_spacing = [ps / ratio for ps in pixel_spacing]
+        
+        # Calculate areas
+        full_area = np.sum(masks[:,:,0] > 0) * adjusted_pixel_spacing[0] * adjusted_pixel_spacing[1] / 100.0
+        area_50 = np.sum(masks_dict[0.5] > 0) * adjusted_pixel_spacing[0] * adjusted_pixel_spacing[1] / 100.0
+        area_70 = np.sum(masks_dict[0.7] > 0) * adjusted_pixel_spacing[0] * adjusted_pixel_spacing[1] / 100.0
+        
+        peripheral_50_70 = area_70 - area_50
+        peripheral_70_100 = full_area - area_70
+        
+        # Print results
+        print(f"\n✓ Peripheral area calculation completed")
+        print(f"\n=== Peripheral Area Results ===")
+        print(f"Total lung area: {full_area:.2f} cm²")
+        print(f"Central area (0-50%): {area_50:.2f} cm²")
+        print(f"Mid-peripheral area (50-70%): {peripheral_50_70:.2f} cm²")
+        print(f"Peripheral area (70-100%): {peripheral_70_100:.2f} cm²")
+        
+        # Calculate percentages
+        central_pct = (area_50 / full_area) * 100
+        mid_pct = (peripheral_50_70 / full_area) * 100
+        peripheral_pct = (peripheral_70_100 / full_area) * 100
+        
+        print(f"\nArea distribution:")
+        print(f"Central: {central_pct:.1f}%")
+        print(f"Mid-peripheral: {mid_pct:.1f}%")
+        print(f"Peripheral: {peripheral_pct:.1f}%")
+        
+        # Update results for CSV
+        all_results['peripheral'] = {
+            'peripheral_total_area_cm2': full_area,
+            'peripheral_central_area_cm2': area_50,
+            'peripheral_mid_area_cm2': peripheral_50_70,
+            'peripheral_outer_area_cm2': peripheral_70_100
+        }
+        
+        # Clean up temporary PNG files created by find_contours
+        base_name = lung_2048_path.replace('.nii', '')
+        temp_files = [
+            f"{base_name}.png",
+            f"{base_name}_mask(binary).png",
+            f"{base_name}_contour.png",
+            f"{base_name}_fullMask.png"
+        ]
+        
+        # When output format is not PNG, remove any PNG files
+        if output_format != 'png':
+            lung_png_pattern = os.path.join(output_dir, f"{input_basename}_lung*.png")
+            for png_file in glob.glob(lung_png_pattern):
+                temp_files.append(png_file)
+        
+        # Remove all temporary files
+        for temp_file in set(temp_files):  # Use set to avoid duplicates
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+                
+    except Exception as e:
+        print(f"✗ Peripheral mask generation failed: {str(e)}")
+        all_results['peripheral'] = {'error': str(e)}
+
+def process_diameter_module(input_file, output_dir, input_basename, all_results):
+    """Process aorta diameter calculation"""
+    import sys
+    import os
+    
+    try:
+        # Check if aorta masks exist
+        asc_file = os.path.join(output_dir, f"{input_basename}_aorta_asc.nii")
+        desc_file = os.path.join(output_dir, f"{input_basename}_aorta_desc.nii")
+        
+        if not os.path.exists(asc_file) and not os.path.exists(desc_file):
+            raise Exception("Diameter calculation requires aorta masks. Please run aorta module first with --output_size 2048 --output_format nii")
+        
+        # Import the diameter calculation function
+        sys.path.append(os.path.join(os.path.dirname(__file__), 'src', 'insights'))
+        from aorta_diameter import compute_diameter
+        
+        # Prepare file dict for diameter calculation
+        diameter_file_dict = {input_basename: []}
+        
+        if os.path.exists(asc_file):
+            diameter_file_dict[input_basename].append(os.path.basename(asc_file))
+        if os.path.exists(desc_file):
+            diameter_file_dict[input_basename].append(os.path.basename(desc_file))
+        
+        if not diameter_file_dict[input_basename]:
+            raise Exception("No aorta mask files found for diameter calculation")
+        
+        # Create output directory for diameter results
+        diameter_output_dir = os.path.join(output_dir, 'diameter_results')
+        os.makedirs(diameter_output_dir, exist_ok=True)
+        
+        # Run diameter calculation
+        max_diameters = compute_diameter(
+            output_folder=diameter_output_dir,
+            input_folder=output_dir,
+            file_dict=diameter_file_dict,
+            head=input_basename,
+            ASCENDING_ONLY=(len(diameter_file_dict[input_basename]) == 1),
+            visualize=False,  # Disable visualization to avoid errors
+            heat_map=False
+        )
+        
+        print("✓ Aorta diameter calculation completed")
+        
+        # Save diameter values to all_results for CSV
+        if max_diameters:
+            all_results['diameter'] = {}
+            if len(max_diameters) >= 1:
+                all_results['diameter']['aorta_ascending_diameter_mm'] = round(max_diameters[0], 1)
+                print(f"\nAscending aorta diameter: {max_diameters[0]:.1f} mm")
+            if len(max_diameters) >= 2:
+                all_results['diameter']['aorta_descending_diameter_mm'] = round(max_diameters[1], 1)
+                print(f"Descending aorta diameter: {max_diameters[1]:.1f} mm")
+                
+    except Exception as e:
+        print(f"✗ Diameter calculation failed: {str(e)}")
+        all_results['diameter'] = {'error': str(e)}
 
 
 def main():
@@ -2142,7 +2461,8 @@ def main():
     parser.add_argument('--module', type=str, 
                        choices=['lung', 'heart', 'airway', 'bone', 'covid', 'vessel', 
                                'heart_volumetry', 'lung_volumetry', 'bone_supp',
-                               'aorta', 'aorta0', 'aorta1', 't12l1', 'laa', 'tb', 't12l1_regression'],
+                               'aorta', 'aorta0', 'aorta1', 't12l1', 'laa', 'tb', 't12l1_regression',
+                               'ctr', 'peripheral', 'diameter'],
                        help='Module to use for inference (required unless --all_modules is used)')
     parser.add_argument('--all_modules', action='store_true',
                        help='Run all segmentation modules in a single execution')
@@ -2168,12 +2488,6 @@ def main():
     # Postprocessing removed - focusing on segmentation and regression only
     parser.add_argument('--collect_measurements', action='store_true',
                        help='Collect all measurements into a single CSV file')
-    parser.add_argument('--diameter', action='store_true',
-                       help='Calculate aorta max diameter (forces 2048x2048 for aorta module)')
-    parser.add_argument('--ctr', action='store_true',
-                       help='Calculate cardiothoracic ratio (CTR) when running heart module')
-    parser.add_argument('--peripheral', action='store_true',
-                       help='Generate peripheral masks (50% and 70%) when running lung module')
     
     args = parser.parse_args()
     
@@ -2191,30 +2505,47 @@ def main():
     
     # Determine which modules to run
     if args.all_modules:
-        # Run all available modules - COVID and vessel will be processed during lung processing
+        # Run all segmentation modules (post-processing modules like ctr, peripheral, diameter are separate)
         modules_to_run = ['lung', 'heart', 'airway', 'bone', 
-                         'aorta', 't12l1', 'laa', 'tb', 'bone_supp']
-        print(f"Running all modules: {', '.join(modules_to_run)}")
-        print("Note: COVID and vessel modules will be processed during lung segmentation")
+                         'aorta', 't12l1', 'laa', 'tb', 'bone_supp', 'covid', 'vessel']
+        print(f"Running all segmentation modules: {', '.join(modules_to_run)}")
+        print("Note: Post-processing modules (ctr, peripheral, diameter) must be run separately")
     else:
         modules_to_run = [args.module]
     
     # Process each module
     all_results = {}
+    # Get input basename for all modules
+    input_basename = os.path.splitext(os.path.basename(args.input_file))[0]
+    
     for module in modules_to_run:
         print(f"\n{'='*60}")
         print(f"Processing module: {module}")
         print(f"{'='*60}")
         
         try:
+            # Handle special post-processing modules
+            if module == 'ctr':
+                # CTR requires heart and lung masks
+                print("Calculating Cardiothoracic Ratio (CTR)...")
+                process_ctr_module(args.input_file, args.output_dir, input_basename, all_results)
+                continue
+            elif module == 'peripheral':
+                # Peripheral requires lung mask
+                print("Generating peripheral lung masks...")
+                process_peripheral_module(args.input_file, args.output_dir, input_basename, args.output_format, all_results)
+                continue
+            elif module == 'diameter':
+                # Diameter requires aorta mask
+                print("Calculating aorta diameter...")
+                process_diameter_module(args.input_file, args.output_dir, input_basename, all_results)
+                continue
+            
             # Get config path - handle aorta0/aorta1 mapping to aorta config
             base_module = module
             if module in ['aorta0', 'aorta1']:
                 base_module = 'aorta'
             config_path = os.path.join(os.path.dirname(__file__), 'configs', f'{base_module}.yaml')
-            
-            # Generate output filename based on input filename and module
-            input_basename = os.path.splitext(os.path.basename(args.input_file))[0]
             
             # Handle output format and file extensions
             if module == 'bone_supp':
@@ -2222,23 +2553,21 @@ def main():
                 extension = args.output_format
                 output_filename = f"{input_basename}_{module}.{extension}"
             elif module in ['tb']:
-                # TB only outputs classification results (no file output)
-                output_filename = f"{input_basename}_{module}_result"  # Dummy filename for consistency
+                # TB outputs lung-segmented image for visualization
+                extension = args.output_format
+                output_filename = f"{input_basename}_{module}.{extension}"
             elif module == 'aorta0':
                 # Ascending aorta
                 extension = args.output_format
-                size_suffix = "_2048" if args.output_size == '2048' else ""
-                output_filename = f"{input_basename}_aorta_asc{size_suffix}.{extension}"
+                output_filename = f"{input_basename}_aorta_asc.{extension}"
             elif module == 'aorta1':
                 # Descending aorta
                 extension = args.output_format
-                size_suffix = "_2048" if args.output_size == '2048' else ""
-                output_filename = f"{input_basename}_aorta_desc{size_suffix}.{extension}"
+                output_filename = f"{input_basename}_aorta_desc.{extension}"
             else:
                 # Use user-specified format
                 extension = args.output_format
-                size_suffix = "_2048" if args.output_size == '2048' else ""
-                output_filename = f"{input_basename}_{module}{size_suffix}.{extension}"
+                output_filename = f"{input_basename}_{module}.{extension}"
             
             output_file = os.path.join(args.output_dir, output_filename)
             
@@ -2247,11 +2576,8 @@ def main():
             
             # Create inference object and process
             # Use unified CSV when collect_measurements is enabled
-            # Pass ctr_requested flag for heart module
-            ctr_requested = args.ctr and module == 'heart'
             inference = UnifiedDCXInference(config_path, args.device, args.output_format, output_size_override, module, 
-                                          unified_csv=args.collect_measurements, batch_mode=args.all_modules, 
-                                          ctr_requested=ctr_requested)
+                                          unified_csv=args.collect_measurements, batch_mode=args.all_modules)
             
             # Skip calculations if requested
             if args.no_calculations:
@@ -2303,410 +2629,6 @@ def main():
             
             print(f"✓ Module {module} completed successfully")
             
-            # Run peripheral mask generation if requested
-            if args.peripheral and module == 'lung':
-                print(f"\n{'='*60}")
-                print("🫁 Generating peripheral masks (50% and 70%)...")
-                print(f"{'='*60}")
-                
-                try:
-                    # Import the peripheral mask functions
-                    sys.path.append(os.path.join(os.path.dirname(__file__), 'postprocessing', 'vessels_peripheral area'))
-                    from central_mask_python import find_contours, center_point, center_point_one, full_mask, bitwise_mask, save_mask
-                    
-                    # Force 2048x2048 for lung if peripheral calculation requested
-                    lung_2048_path = None
-                    if args.output_size != '2048':
-                        # Need to generate 2048 version
-                        print("⚡ Generating 2048x2048 lung mask for peripheral calculation...")
-                        lung_config_path = os.path.join(os.path.dirname(__file__), 'configs', 'lung.yaml')
-                        lung_inference = UnifiedDCXInference(lung_config_path, args.device, args.output_format, '2048', 'lung')
-                        lung_2048_path = os.path.join(args.output_dir, f"{input_basename}_lung_2048.{args.output_format}")
-                        lung_results = lung_inference.process(args.input_file, lung_2048_path, None)
-                    else:
-                        # Already have 2048 version
-                        lung_2048_path = output_file
-                    
-                    # Set global variable for the functions
-                    import central_mask_python
-                    
-                    # Process lung mask to generate peripheral masks
-                    img_color, lung_contours = find_contours(lung_2048_path)
-                    central_mask_python.img = img_color
-                    
-                    # Filter contours (keep only significant ones > 1000 pixels)
-                    lung_contour = []
-                    for c in lung_contours:
-                        if len(c) > 1000:
-                            lung_contour.append(c)
-                    
-                    if len(lung_contour) == 0:
-                        print("⚠️  No significant lung contours found")
-                        raise Exception("No lung contours found for peripheral mask generation")
-                    
-                    # Calculate center point
-                    if len(lung_contour) == 1:
-                        center = center_point_one(lung_contour)
-                    else:
-                        center = center_point(lung_contour)
-                    
-                    # Generate full mask
-                    masks = full_mask(center, lung_contour)
-                    
-                    # Track files to clean up
-                    temp_files_to_delete = []
-                    
-                    # Generate masks at different percentages
-                    masks_dict = {}
-                    for p in [0.5, 0.7]:
-                        mask, masked = bitwise_mask(img_color, masks, center, p)
-                        masks_dict[p] = mask[:,:,0]
-                    
-                    # Calculate areas using pixel spacing from DICOM
-                    # Load the original DICOM to get pixel spacing
-                    ds = dicom.dcmread(args.input_file, force=True)
-                    pixel_spacing = ds.get((0x0028, 0x0030), [0.18, 0.18])
-                    if isinstance(pixel_spacing, (int, float)):
-                        pixel_spacing = [pixel_spacing, pixel_spacing]
-                    
-                    # Always calculate areas when we have masks
-                    full_area = np.sum(masks[:,:,0] > 0) * pixel_spacing[0] * pixel_spacing[1] / 100.0
-                    area_50 = np.sum(masks_dict[0.5] > 0) * pixel_spacing[0] * pixel_spacing[1] / 100.0
-                    area_70 = np.sum(masks_dict[0.7] > 0) * pixel_spacing[0] * pixel_spacing[1] / 100.0
-                    
-                    peripheral_50_70 = area_70 - area_50
-                    peripheral_70_100 = full_area - area_70
-                    
-                    # Print results (similar to aorta diameter output)
-                    print(f"\n✓ Peripheral area calculation completed")
-                    print(f"\n=== Peripheral Area Results ===")
-                    print(f"Total lung area: {full_area:.2f} cm²")
-                    print(f"Central area (0-50%): {area_50:.2f} cm²")
-                    print(f"Mid-peripheral area (50-70%): {peripheral_50_70:.2f} cm²")
-                    print(f"Peripheral area (70-100%): {peripheral_70_100:.2f} cm²")
-                    
-                    # Calculate percentages
-                    central_pct = (area_50 / full_area) * 100
-                    mid_pct = (peripheral_50_70 / full_area) * 100
-                    peripheral_pct = (peripheral_70_100 / full_area) * 100
-                    
-                    print(f"\nArea distribution:")
-                    print(f"Central: {central_pct:.1f}%")
-                    print(f"Mid-peripheral: {mid_pct:.1f}%")
-                    print(f"Peripheral: {peripheral_pct:.1f}%")
-                    
-                    # Update results for CSV
-                    all_results[module]['peripheral_total_area_cm2'] = full_area
-                    all_results[module]['peripheral_central_area_cm2'] = area_50
-                    all_results[module]['peripheral_mid_area_cm2'] = peripheral_50_70
-                    all_results[module]['peripheral_outer_area_cm2'] = peripheral_70_100
-                    
-                    # Clean up all temporary files
-                    # Remove PNG files created by find_contours
-                    temp_png_files = [
-                        lung_2048_path.replace('.nii', '.png'),
-                        lung_2048_path.replace('.nii', '_mask(binary).png'),
-                        lung_2048_path.replace('.nii', '_contour.png'),
-                        lung_2048_path.replace('.nii', '_fullMask.png')
-                    ]
-                    
-                    for temp_file in temp_png_files:
-                        if os.path.exists(temp_file):
-                            os.remove(temp_file)
-                            temp_files_to_delete.append(temp_file)
-                    
-                    # Clean up temporary 2048 file if created
-                    if args.output_size != '2048' and os.path.exists(lung_2048_path):
-                        os.remove(lung_2048_path)
-                        temp_files_to_delete.append(lung_2048_path)
-                    
-                    if temp_files_to_delete:
-                        print("\n🧹 Cleaning up temporary files...")
-                        for temp_file in temp_files_to_delete:
-                            print(f"🗑️  Removed: {os.path.basename(temp_file)}")
-                    
-                except Exception as e:
-                    print(f"⚠️  Peripheral mask generation failed: {e}")
-                    import traceback
-                    print(f"Traceback: {traceback.format_exc()}")
-            
-            # Run aorta diameter calculation if requested
-            if args.diameter and module == 'aorta':
-                print(f"\n{'='*60}")
-                print("📏 Calculating aorta max diameter...")
-                print(f"{'='*60}")
-                
-                try:
-                    # Import the diameter calculation function
-                    sys.path.append(os.path.join(os.path.dirname(__file__), 'postprocessing', 'aorta_max diameter'))
-                    from aortav2_test_plus_20250324 import compute_diameter
-                    
-                    # Prepare file dict for diameter calculation
-                    diameter_file_dict = {input_basename: []}
-                    
-                    # Find the generated 2048 files
-                    combined_file = f"{input_basename}_aorta_2048.{args.output_format}"
-                    asc_file = f"{input_basename}_aorta_asc_2048.{args.output_format}"
-                    desc_file = f"{input_basename}_aorta_desc_2048.{args.output_format}"
-                    
-                    # Track all 2048 files to remove
-                    all_2048_files = []
-                    temp_generated_2048 = False
-                    
-                    # If output size is not 2048, we need to generate temporary 2048 files
-                    if args.output_size != '2048':
-                        print("⚡ Generating temporary 2048x2048 aorta masks for diameter calculation...")
-                        
-                        # Re-run aorta module at 2048 resolution
-                        aorta_config_path = os.path.join(os.path.dirname(__file__), 'configs', 'aorta.yaml')
-                        aorta_inference_2048 = UnifiedDCXInference(aorta_config_path, args.device, args.output_format, '2048', 'aorta')
-                        
-                        # Generate 2048 output with _2048 suffix
-                        aorta_2048_path = os.path.join(args.output_dir, combined_file)
-                        aorta_results_2048 = aorta_inference_2048.process(args.input_file, aorta_2048_path, None)
-                        
-                        temp_generated_2048 = True
-                        print("✓ Temporary 2048x2048 aorta masks generated")
-                    
-                    # Check which files exist after generation
-                    if os.path.exists(os.path.join(args.output_dir, asc_file)):
-                        diameter_file_dict[input_basename].append(asc_file)
-                        if temp_generated_2048:
-                            all_2048_files.append(asc_file)
-                    if os.path.exists(os.path.join(args.output_dir, desc_file)):
-                        diameter_file_dict[input_basename].append(desc_file)
-                        if temp_generated_2048:
-                            all_2048_files.append(desc_file)
-                    if os.path.exists(os.path.join(args.output_dir, combined_file)):
-                        if temp_generated_2048:
-                            all_2048_files.append(combined_file)
-                    
-                    if diameter_file_dict[input_basename]:
-                        # Create output directory for diameter results
-                        diameter_output_dir = os.path.join(args.output_dir, 'diameter_results')
-                        os.makedirs(diameter_output_dir, exist_ok=True)
-                        
-                        # Run diameter calculation
-                        max_diameters = compute_diameter(
-                            output_folder=diameter_output_dir,
-                            input_folder=args.output_dir,
-                            file_dict=diameter_file_dict,
-                            head=input_basename,
-                            ASCENDING_ONLY=(len(diameter_file_dict[input_basename]) == 1),
-                            visualize=False,  # Disable visualization to avoid errors
-                            heat_map=False
-                        )
-                        
-                        print("✓ Aorta diameter calculation completed")
-                        
-                        # Save diameter values to all_results for CSV
-                        if max_diameters and 'aorta' in all_results:
-                            if len(max_diameters) >= 2:
-                                all_results['aorta']['aorta_ascending_diameter_mm'] = round(max_diameters[0], 1)
-                                all_results['aorta']['aorta_descending_diameter_mm'] = round(max_diameters[1], 1)
-                            elif len(max_diameters) == 1:
-                                all_results['aorta']['aorta_ascending_diameter_mm'] = round(max_diameters[0], 1)
-                        
-                        # Remove temporary 2048 files if not originally requested
-                        if args.output_size != '2048':
-                            for temp_file in all_2048_files:
-                                temp_path = os.path.join(args.output_dir, temp_file)
-                                if os.path.exists(temp_path):
-                                    os.remove(temp_path)
-                                    print(f"🗑️  Removed temporary file: {temp_file}")
-                        
-                        # Also remove diameter_results directory
-                        if os.path.exists(diameter_output_dir):
-                            import shutil
-                            shutil.rmtree(diameter_output_dir)
-                            print(f"🗑️  Removed diameter results directory")
-                    else:
-                        print("⚠️  No aorta files found for diameter calculation")
-                        
-                except Exception as e:
-                    print(f"⚠️  Diameter calculation failed: {e}")
-                    # Continue processing other modules even if diameter fails
-            
-            # Run CTR calculation if requested
-            if args.ctr and module == 'heart':
-                print(f"\n{'='*60}")
-                print("💓 Calculating cardiothoracic ratio (CTR)...")
-                print(f"{'='*60}")
-                
-                try:
-                    # Track files to potentially delete after CTR calculation
-                    temp_files_to_delete = []
-                    lung_was_generated = False
-                    
-                    # Check if lung mask exists
-                    lung_2048_file = f"{input_basename}_lung_2048.{args.output_format}"
-                    lung_2048_path = os.path.join(args.output_dir, lung_2048_file)
-                    
-                    # If no 2048 lung mask exists, generate it automatically
-                    if not os.path.exists(lung_2048_path):
-                        print("📦 No lung mask found. Automatically generating lung segmentation at 2048x2048...")
-                        
-                        # Run lung segmentation
-                        lung_config_path = os.path.join(os.path.dirname(__file__), 'configs', 'lung.yaml')
-                        lung_inference = UnifiedDCXInference(lung_config_path, args.device, args.output_format, '2048', 'lung')
-                        
-                        # Process lung
-                        lung_results = lung_inference.process(args.input_file, lung_2048_path, None)
-                        if 'error' in lung_results:
-                            raise Exception(f"Lung segmentation failed: {lung_results['error']}")
-                        
-                        print("✓ Lung segmentation completed automatically")
-                        lung_was_generated = True
-                        temp_files_to_delete.append(lung_2048_path)
-                        
-                        # Also track any intermediate files created by lung segmentation
-                        lung_base = os.path.join(args.output_dir, f"{input_basename}_lung_2048")
-                        for ext in ['.png', '_contour.png', '_mask(binary).png']:
-                            temp_file = lung_base + ext
-                            if os.path.exists(temp_file):
-                                temp_files_to_delete.append(temp_file)
-                    
-                    # Import CTR calculation function
-                    sys.path.append(os.path.join(os.path.dirname(__file__), 'postprocessing', 'heart_cardiothoracic ratio'))
-                    from cardiothoracic_ratio import (find_contours, center_point, center_point_one, 
-                                                      full_mask, bitwise_mask, get_longest_line)
-                    import cardiothoracic_ratio
-                    
-                    # Get heart mask path (512x512)
-                    heart_512_file = f"{input_basename}_heart_512.{args.output_format}"
-                    heart_512_path = os.path.join(args.output_dir, heart_512_file)
-                    
-                    # Track heart_512 if it's temporary (not originally requested size)
-                    if args.output_size != '512':
-                        temp_files_to_delete.append(heart_512_path)
-                    
-                    # Check if 512 heart mask exists
-                    if not os.path.exists(heart_512_path):
-                        # Check for default size heart mask
-                        heart_file = f"{input_basename}_heart.{args.output_format}"
-                        heart_path = os.path.join(args.output_dir, heart_file)
-                        if os.path.exists(heart_path) and args.output_size == '512':
-                            heart_512_path = heart_path
-                        else:
-                            print("⚠️  No 512x512 heart mask found. CTR requires 512x512 heart mask.")
-                            raise Exception("512x512 heart mask required for CTR calculation")
-                    
-                    # Read DICOM for metadata
-                    import pydicom
-                    data = pydicom.dcmread(args.input_file)
-                    pixel_spacing = data.PixelSpacing if 'PixelSpacing' in data else [0.144, 0.144]
-                    height = data.Rows
-                    width = data.Columns
-                    
-                    # Process lung contours
-                    lung_contour = []
-                    img, lung_contours = find_contours(lung_2048_path)
-                    
-                    # Track intermediate files created by find_contours
-                    lung_base = lung_2048_path[:-4]  # Remove .nii extension
-                    ctr_intermediate_files = [
-                        f"{lung_base}.png",
-                        f"{lung_base}_mask(binary).png",
-                        f"{lung_base}_contour.png"
-                    ]
-                    for intermediate_file in ctr_intermediate_files:
-                        if os.path.exists(intermediate_file):
-                            temp_files_to_delete.append(intermediate_file)
-                    
-                    # Set global img variable for cardiothoracic_ratio module
-                    cardiothoracic_ratio.img = img
-                    
-                    for c in lung_contours:
-                        if len(c) > 1000:
-                            lung_contour.append(c)
-                    
-                    if len(lung_contour) == 0:
-                        print("⚠️  No significant lung contours found")
-                        raise Exception("No lung contours found for CTR calculation")
-                    
-                    # Calculate lung center and measurements
-                    if len(lung_contour) == 1:
-                        center = center_point_one(lung_contour)
-                        masks = full_mask(center, lung_contour)
-                    else:
-                        center = center_point(lung_contour)
-                        masks = full_mask(center, lung_contour)
-                    
-                    mask, masked = bitwise_mask(img, masks, center, 1.0)
-                    mask = mask[:,:,0]
-                    
-                    # Find MHTD (Maximum Horizontal Thoracic Diameter)
-                    maxCount = 0
-                    maxY = -1
-                    for y in range(mask.shape[0]):
-                        count = cv2.countNonZero(mask[y, :])
-                        if count > maxCount:
-                            maxCount = count
-                            maxY = y
-                    
-                    startX = -1
-                    endX = -1
-                    for x in range(mask.shape[1]):
-                        if mask[maxY, x] == 255:
-                            if startX == -1:
-                                startX = x
-                            endX = x
-                    
-                    MHTD = (endX - startX) * pixel_spacing[0]
-                    center = startX + ((endX - startX) / 2)
-                    
-                    # Process heart (512x512 -> repeated to 2048x2048)
-                    heart_img = nib.load(heart_512_path)
-                    heart_data = heart_img.get_fdata()
-                    heart_data = np.squeeze(heart_data)
-                    heart_data = np.transpose(heart_data, (1, 0))
-                    heart_data = np.repeat(heart_data, 4, axis=0)
-                    heart_data = np.repeat(heart_data, 4, axis=1)
-                    
-                    # Find MHCD (Maximum Horizontal Cardiac Diameter)
-                    left_heart = heart_data[:, :int(center)]
-                    right_heart = heart_data[:, int(center):]
-                    
-                    left_longest_line = get_longest_line(left_heart, center, 2048)
-                    right_longest_line = get_longest_line(right_heart, 2048-center, 2048)
-                    
-                    left_length = left_longest_line[1][0] - left_longest_line[0][0]
-                    right_length = right_longest_line[1][0] - right_longest_line[0][0]
-                    MHCD = left_length + right_length
-                    
-                    # Calculate CTR
-                    newSize = 2048
-                    newSpacingX = pixel_spacing[0] * max(width, height) / newSize
-                    ct_ratio = (MHCD * newSpacingX) / MHTD
-                    
-                    # Print results (similar to aorta diameter output)
-                    print(f"\n✓ CTR calculation completed")
-                    print(f"\n=== Cardiothoracic Ratio Results ===")
-                    print(f"MHTD: {MHTD:.2f} mm")
-                    print(f"MHCD: {MHCD * newSpacingX:.2f} mm")
-                    print(f"CT Ratio: {ct_ratio:.3f}")
-                    print(f"Interpretation: {'Normal (<0.50)' if ct_ratio < 0.50 else 'Borderline (0.50-0.55)' if ct_ratio <= 0.55 else 'Enlarged (>0.55)'}")
-                    
-                    # Update results for CSV
-                    if 'heart' in all_results:
-                        all_results['heart']['ctr'] = ct_ratio
-                        all_results['heart']['mhtd_mm'] = MHTD
-                        all_results['heart']['mhcd_mm'] = MHCD * newSpacingX
-                    
-                    # Clean up temporary files
-                    if temp_files_to_delete:
-                        print("\n🧹 Cleaning up temporary files...")
-                        for temp_file in temp_files_to_delete:
-                            if os.path.exists(temp_file):
-                                os.remove(temp_file)
-                                print(f"🗑️  Removed: {os.path.basename(temp_file)}")
-                    
-                except Exception as e:
-                    print(f"⚠️  CTR calculation failed: {e}")
-                    import traceback
-                    print(f"Traceback: {traceback.format_exc()}")
-                    # Continue processing even if CTR fails
-            
         except Exception as e:
             print(f"✗ Module {module} failed: {str(e)}")
             import traceback
@@ -2733,92 +2655,89 @@ def main():
     # Collect measurements into CSV if requested
     if args.collect_measurements and not args.no_calculations:
         print("\nCollecting measurements into CSV...")
-        from core.measurement_collector import create_comprehensive_csv
-        
-        # Postprocessing removed - focusing on segmentation and regression only
+        from src.utils.measurement_collector import create_comprehensive_csv
         
         # Extract measurements from all module results
         measurements_data = {}
+        
+        # Add basic metadata
+        measurements_data['patient_id'] = os.path.splitext(os.path.basename(args.input_file))[0]
+        measurements_data['processing_date'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        measurements_data['dicom_file'] = os.path.basename(args.input_file)
+        
         for module, module_results in all_results.items():
             if 'error' not in module_results:
+                # Basic area measurements
                 if 'area' in module_results:
-                    measurements_data[f'{module}_area_cm2'] = module_results['area']
-                # Volume only for modules with regression models
-                volume_modules = ['heart', 'lung', 't12l1_regression']
-                if 'volume' in module_results and module in volume_modules:
-                    measurements_data[f'{module}_volume_ml'] = module_results['volume']
+                    measurements_data[f'{module}_area_cm2'] = round(module_results['area'], 2)
                 
-                # Handle COVID and vessel results from lung module in batch mode
+                # Volume measurements for modules with regression models
+                volume_modules = ['heart', 'lung']
+                if 'volume' in module_results and module in volume_modules:
+                    measurements_data[f'{module}_volume_ml'] = round(module_results['volume'], 2)
+                    measurements_data[f'{module}_volume_l'] = round(module_results['volume']/1000, 3)
+                
+                # Extract metadata
+                for key in ['pixel_spacing_mm', 'image_height', 'image_width']:
+                    if key in module_results:
+                        measurements_data[key] = module_results[key]
+                
+                # Handle COVID and vessel results from lung module
                 if module == 'lung':
                     if 'covid' in module_results and 'error' not in module_results['covid']:
                         covid_data = module_results['covid']
                         if 'area' in covid_data:
-                            measurements_data['covid_area_cm2'] = covid_data['area']
+                            measurements_data['covid_area_cm2'] = round(covid_data['area'], 2)
                     
                     if 'vessel' in module_results and 'error' not in module_results['vessel']:
                         vessel_data = module_results['vessel']
                         if 'area' in vessel_data:
-                            measurements_data['vessel_area_cm2'] = vessel_data['area']
-                
-                # Extract metadata and postprocessing measurements from module results
-                # Debug: print all keys to see what's available
-                if module == 'aorta':
-                    print(f"DEBUG: Aorta module results keys: {list(module_results.keys())}")
+                            measurements_data['vessel_area_cm2'] = round(vessel_data['area'], 2)
                     
-                for key, value in module_results.items():
-                    if key in ['pixel_spacing_mm', 'image_height', 'image_width']:
-                        measurements_data[key] = value
-        
-        # Handle module-specific measurements
-        
-        # Handle special cases with multiple values (continue from previous loop)
-        for module, module_results in all_results.items():
-            if 'error' not in module_results:
-                if module == 't12l1':
+                    # Peripheral measurements
+                    for key in ['peripheral_total_area_cm2', 'peripheral_central_area_cm2', 
+                               'peripheral_mid_area_cm2', 'peripheral_outer_area_cm2']:
+                        if key in module_results:
+                            measurements_data[key] = round(module_results[key], 2)
+                
+                # Heart measurements (CTR)
+                elif module == 'heart':
+                    if 'ctr' in module_results:
+                        measurements_data['cardiothoracic_ratio'] = round(module_results['ctr'], 3)
+                    if 'mhtd_mm' in module_results:
+                        measurements_data['mhtd_mm'] = round(module_results['mhtd_mm'], 2)
+                    if 'mhcd_mm' in module_results:
+                        measurements_data['mhcd_mm'] = round(module_results['mhcd_mm'], 2)
+                
+                # Aorta measurements
+                elif module == 'aorta':
+                    if 'aorta_ascending_diameter_mm' in module_results:
+                        measurements_data['aorta_ascending_diameter_mm'] = round(module_results['aorta_ascending_diameter_mm'], 1)
+                    if 'aorta_descending_diameter_mm' in module_results:
+                        measurements_data['aorta_descending_diameter_mm'] = round(module_results['aorta_descending_diameter_mm'], 1)
+                
+                # T12L1 measurements
+                elif module == 't12l1':
                     if 'area_t12' in module_results:
-                        measurements_data['t12_area_cm2'] = module_results['area_t12']
+                        measurements_data['t12_area_cm2'] = round(module_results['area_t12'], 2)
                     if 'area_l1' in module_results:
-                        measurements_data['l1_area_cm2'] = module_results['area_l1']
+                        measurements_data['l1_area_cm2'] = round(module_results['area_l1'], 2)
+                
+                # LAA measurements
                 elif module == 'laa':
-                    # LAA returns data directly, not nested
                     if 'emphysema_prob' in module_results:
-                        measurements_data['laa_emphysema_probability'] = module_results['emphysema_prob']
+                        measurements_data['laa_emphysema_probability'] = round(module_results['emphysema_prob'], 4)
                     if 'desc' in module_results:
                         measurements_data['laa_emphysema_classification'] = module_results['desc']
                     if 'area' in module_results:
-                        measurements_data['laa_emphysema_area_cm2'] = module_results['area']
+                        measurements_data['laa_emphysema_area_cm2'] = round(module_results['area'], 2)
+                
+                # TB measurements
                 elif module == 'tb':
-                    # TB classification results
                     if 'probability' in module_results:
-                        measurements_data['tb_probability'] = module_results['probability']
+                        measurements_data['tb_probability'] = round(module_results['probability'], 4)
                     if 'prediction' in module_results:
                         measurements_data['tb_classification'] = 'Positive' if module_results['prediction'] else 'Negative'
-                elif module == 'lung':
-                    # Peripheral measurements
-                    if 'peripheral_total_area_cm2' in module_results:
-                        measurements_data['peripheral_total_area_cm2'] = module_results['peripheral_total_area_cm2']
-                    if 'peripheral_central_area_cm2' in module_results:
-                        measurements_data['peripheral_central_area_cm2'] = module_results['peripheral_central_area_cm2']
-                    if 'peripheral_mid_area_cm2' in module_results:
-                        measurements_data['peripheral_mid_area_cm2'] = module_results['peripheral_mid_area_cm2']
-                    if 'peripheral_outer_area_cm2' in module_results:
-                        measurements_data['peripheral_outer_area_cm2'] = module_results['peripheral_outer_area_cm2']
-                elif module == 'heart':
-                    # CTR measurements
-                    if 'ctr' in module_results:
-                        measurements_data['cardiothoracic_ratio'] = module_results['ctr']
-                    if 'mhtd_mm' in module_results:
-                        measurements_data['mhtd_mm'] = module_results['mhtd_mm']
-                    if 'mhcd_mm' in module_results:
-                        measurements_data['mhcd_mm'] = module_results['mhcd_mm']
-                elif module == 'aorta':
-                    # Aorta diameter measurements
-                    if 'aorta_ascending_diameter_mm' in module_results:
-                        measurements_data['aorta_ascending_diameter_mm'] = module_results['aorta_ascending_diameter_mm']
-                    if 'aorta_descending_diameter_mm' in module_results:
-                        measurements_data['aorta_descending_diameter_mm'] = module_results['aorta_descending_diameter_mm']
-        
-        # Postprocessing removed - focusing on segmentation and regression only
         
         # Debug: print all measurements before CSV creation
         print(f"\nDEBUG: Final measurements being saved to CSV:")
