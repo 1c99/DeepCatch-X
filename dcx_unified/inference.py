@@ -718,8 +718,8 @@ class UnifiedDCXInference:
         else:
             # Regular processing for combined aorta
             if self.config.get('multi_channel_output', False):
-                # For multi-channel like aorta, sum the channels for combined output
-                combined_output = np.sum(output_full, axis=1, keepdims=True)  # Sum across channel dimension
+                # For multi-channel like aorta, use max instead of sum to avoid saturation
+                combined_output = np.max(output_full, axis=1, keepdims=True)  # Max across channel dimension
                 self._save_output(combined_output, output_path, pixel_spacing, ratio)
                 
                 # Also save individual channels
@@ -1180,6 +1180,12 @@ class UnifiedDCXInference:
             
             # Clean data first to handle NaN values
             nii_clean = np.nan_to_num(nii_np, nan=-1024.0, posinf=0.0, neginf=-1024.0)
+            
+            # Special handling for LAA module (probability values 0-1)
+            if hasattr(self, 'module_name') and self.module_name == 'laa':
+                # Scale probability values to visible HU range
+                # LAA values are typically 0-1, scale to a visible range like 0-1000 HU
+                nii_clean = nii_clean * 1000
             
             # Ensure the output array has the same shape as the original
             if nii_clean.shape != ds.pixel_array.shape:
