@@ -639,6 +639,18 @@ class UnifiedDCXInference:
         if self.output_format == 'dcm':
             # Save as DICOM (exactly like original DCX_python_inference)
             output_denorm = output_denorm.astype(str(ds.pixel_array.dtype))
+            
+            # Update DICOM metadata if dimensions changed
+            if output_denorm.shape != ds.pixel_array.shape:
+                ds.Rows, ds.Columns = output_denorm.shape
+                
+                # Update pixel spacing for resized images
+                if hasattr(ds, 'PixelSpacing'):
+                    original_spacing = float(ds.PixelSpacing[0])
+                    scale_factor = ds.pixel_array.shape[0] / output_denorm.shape[0]
+                    new_spacing = original_spacing * scale_factor
+                    ds.PixelSpacing = [new_spacing, new_spacing]
+            
             ds.PixelData = output_denorm.tobytes()
             
             # Create output directory if needed
@@ -1191,13 +1203,15 @@ class UnifiedDCXInference:
                 # LAA values are typically 0-1, scale to a visible range like 0-1000 HU
                 nii_clean = nii_clean * 1000
             
-            # Ensure the output array has the same shape as the original
-            if nii_clean.shape != ds.pixel_array.shape:
-                # If shapes don't match, resize to original dimensions
-                from PIL import Image
-                img = Image.fromarray(nii_clean)
-                img_resized = img.resize((ds.pixel_array.shape[1], ds.pixel_array.shape[0]), Image.NEAREST)
-                nii_clean = np.array(img_resized)
+            # Update DICOM metadata if dimensions changed (for 512x512 or 2048x2048 output)
+            original_shape = ds.pixel_array.shape
+            if nii_clean.shape != original_shape:
+                # Calculate new pixel spacing for resized image
+                if hasattr(ds, 'PixelSpacing'):
+                    original_spacing = float(ds.PixelSpacing[0])
+                    scale_factor = original_shape[0] / nii_clean.shape[0]
+                    new_spacing = original_spacing * scale_factor
+                    ds.PixelSpacing = [new_spacing, new_spacing]
             
             # Convert to original DICOM data type
             # For uint16, we need to shift negative values to positive range
