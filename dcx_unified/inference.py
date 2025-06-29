@@ -734,8 +734,11 @@ class UnifiedDCXInference:
                 combined_output = np.max(output_full, axis=1, keepdims=True)  # Max across channel dimension
                 self._save_output(combined_output, output_path, pixel_spacing, ratio)
                 
-                # Also save individual channels
-                self._save_multi_channel_output(output_full, output_path, pixel_spacing, ratio)
+                # Only save individual channels if not creating temp files
+                # Check if output path contains 'temp' to identify temporary files
+                if 'temp' not in os.path.basename(output_path):
+                    # Also save individual channels
+                    self._save_multi_channel_output(output_full, output_path, pixel_spacing, ratio)
             else:
                 # Regular single-channel output
                 self._save_output(output_full, output_path, pixel_spacing, ratio)
@@ -2184,6 +2187,61 @@ class UnifiedDCXInference:
         return scaled_img
     
 
+def create_temp_file_if_needed(input_file, output_dir, input_basename, module_name, target_size, device=None):
+    """Create temporary file with specific size if it doesn't exist in the required format"""
+    import os
+    
+    # Define the expected path
+    if module_name == 'lung':
+        expected_path = os.path.join(output_dir, f"{input_basename}_lung_temp{target_size}.nii")
+    elif module_name == 'heart':
+        expected_path = os.path.join(output_dir, f"{input_basename}_heart_temp{target_size}.nii")
+    elif module_name == 'aorta_asc':
+        expected_path = os.path.join(output_dir, f"{input_basename}_aorta_asc_temp{target_size}.nii")
+    elif module_name == 'aorta_desc':
+        expected_path = os.path.join(output_dir, f"{input_basename}_aorta_desc_temp{target_size}.nii")
+    else:
+        raise ValueError(f"Unknown module for temp file: {module_name}")
+    
+    # If temp file already exists, return its path
+    if os.path.exists(expected_path):
+        return expected_path
+    
+    # Always run the segmentation to create the temp file
+    # Post-processing modules require specific formats and sizes
+    print(f"  Creating temporary {target_size}x{target_size} {module_name} mask for calculation...")
+    
+    # Determine the actual module to run
+    if module_name in ['aorta_asc', 'aorta_desc']:
+        actual_module = 'aorta'
+    else:
+        actual_module = module_name
+    
+    # Create inference object with specific settings
+    # Use module-specific config
+    config_path = os.path.join(os.path.dirname(__file__), 'configs', f'{actual_module}.yaml')
+    
+    # If device not specified, use the best available
+    if device is None:
+        import torch
+        if torch.cuda.is_available():
+            device = 'cuda'
+        elif torch.backends.mps.is_available():
+            device = 'mps'
+        else:
+            device = 'cpu'
+    
+    inference = UnifiedDCXInference(config_path, device, 'nii', str(target_size), actual_module)
+    
+    # Process to create the temp file
+    results = inference.process(input_file, expected_path)
+    
+    # Note: We don't use this function for aorta diameter anymore
+    # The diameter module now runs the full aorta segmentation to get proper asc/desc files
+    
+    return expected_path
+
+
 def process_ctr_module(input_file, output_dir, input_basename, all_results):
     """Process CTR (Cardiothoracic Ratio) calculation"""
     import sys
@@ -2194,14 +2252,26 @@ def process_ctr_module(input_file, output_dir, input_basename, all_results):
     import pydicom
     
     try:
-        # Check if required masks exist
+        # Create temporary files if needed
+        temp_files = []
+        
+        # Check for existing files or create temp ones
         lung_2048_path = os.path.join(output_dir, f"{input_basename}_lung.nii")
+        if not os.path.exists(lung_2048_path):
+            # Always create temp file for CTR
+            lung_2048_path = create_temp_file_if_needed(input_file, output_dir, input_basename, 'lung', 2048)
+            temp_files.append(lung_2048_path)
+        
         heart_512_path = os.path.join(output_dir, f"{input_basename}_heart.nii")
+        if not os.path.exists(heart_512_path):
+            # Always create temp file for CTR
+            heart_512_path = create_temp_file_if_needed(input_file, output_dir, input_basename, 'heart', 512)
+            temp_files.append(heart_512_path)
         
         if not os.path.exists(lung_2048_path):
-            raise Exception("CTR requires lung mask. Please run lung module first with --output_size 2048 --output_format nii")
+            raise Exception("CTR requires lung mask. Failed to create temporary lung mask.")
         if not os.path.exists(heart_512_path):
-            raise Exception("CTR requires heart mask. Please run heart module first with --output_size 512 --output_format nii")
+            raise Exception("CTR requires heart mask. Failed to create temporary heart mask.")
         
         # Import CTR calculation function
         sys.path.append(os.path.join(os.path.dirname(__file__), 'src', 'insights'))
@@ -2299,21 +2369,30 @@ def process_ctr_module(input_file, output_dir, input_basename, all_results):
             'mhcd_mm': MHCD * newSpacingX
         }
         
-        # Clean up temporary PNG files created by find_contours
+        # Clean up temporary files
         lung_base = lung_2048_path[:-4]  # Remove .nii extension
-        temp_files = [
+        cleanup_files = [
             f"{lung_base}.png",
             f"{lung_base}_mask(binary).png",
             f"{lung_base}_contour.png",
             f"{lung_base}_fullMask.png"
         ]
-        for temp_file in temp_files:
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+        
+        # Add our temp .nii files to cleanup
+        cleanup_files.extend(temp_files)
+        
+        for cleanup_file in cleanup_files:
+            if os.path.exists(cleanup_file):
+                os.remove(cleanup_file)
                 
     except Exception as e:
         print(f"✗ CTR calculation failed: {str(e)}")
         all_results['ctr'] = {'error': str(e)}
+        
+        # Clean up temp files even on error
+        for temp_file in temp_files if 'temp_files' in locals() else []:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
 
 def process_peripheral_module(input_file, output_dir, input_basename, output_format, all_results):
     """Process peripheral lung mask generation"""
@@ -2324,11 +2403,18 @@ def process_peripheral_module(input_file, output_dir, input_basename, output_for
     import glob
     
     try:
-        # Check if lung mask exists
+        # Create temporary file if needed
+        temp_files = []
+        
+        # Check for existing file or create temp one
         lung_2048_path = os.path.join(output_dir, f"{input_basename}_lung.nii")
+        if not os.path.exists(lung_2048_path):
+            # Always create temp file for peripheral
+            lung_2048_path = create_temp_file_if_needed(input_file, output_dir, input_basename, 'lung', 2048)
+            temp_files.append(lung_2048_path)
         
         if not os.path.exists(lung_2048_path):
-            raise Exception("Peripheral masks require lung mask. Please run lung module first with --output_size 2048 --output_format nii")
+            raise Exception("Peripheral masks require lung mask. Failed to create temporary lung mask.")
         
         # Import the peripheral mask functions
         sys.path.append(os.path.join(os.path.dirname(__file__), 'src', 'insights'))
@@ -2410,14 +2496,17 @@ def process_peripheral_module(input_file, output_dir, input_basename, output_for
             'peripheral_outer_area_cm2': peripheral_70_100
         }
         
-        # Clean up temporary PNG files created by find_contours
+        # Clean up temporary files
         base_name = lung_2048_path.replace('.nii', '')
-        temp_files = [
+        cleanup_files = [
             f"{base_name}.png",
             f"{base_name}_mask(binary).png",
             f"{base_name}_contour.png",
             f"{base_name}_fullMask.png"
         ]
+        
+        # Add our temp .nii files to cleanup
+        cleanup_files.extend(temp_files)
         
         # When output format is not PNG, remove any PNG files
         if output_format != 'png':
@@ -2426,13 +2515,18 @@ def process_peripheral_module(input_file, output_dir, input_basename, output_for
                 temp_files.append(png_file)
         
         # Remove all temporary files
-        for temp_file in set(temp_files):  # Use set to avoid duplicates
+        for temp_file in set(cleanup_files):  # Use set to avoid duplicates
             if os.path.exists(temp_file):
                 os.remove(temp_file)
                 
     except Exception as e:
         print(f"✗ Peripheral mask generation failed: {str(e)}")
         all_results['peripheral'] = {'error': str(e)}
+        
+        # Clean up temp files even on error
+        for temp_file in temp_files if 'temp_files' in locals() else []:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
 
 def process_diameter_module(input_file, output_dir, input_basename, all_results):
     """Process aorta diameter calculation"""
@@ -2440,12 +2534,52 @@ def process_diameter_module(input_file, output_dir, input_basename, all_results)
     import os
     
     try:
-        # Check if aorta masks exist
+        # Create temporary files if needed
+        temp_files = []
+        
+        # Check for existing aorta files
         asc_file = os.path.join(output_dir, f"{input_basename}_aorta_asc.nii")
         desc_file = os.path.join(output_dir, f"{input_basename}_aorta_desc.nii")
         
+        # If files don't exist, we need to run aorta segmentation first
+        if not os.path.exists(asc_file) or not os.path.exists(desc_file):
+            print("  Creating aorta segmentation for diameter calculation...")
+            
+            # Determine device to use
+            import torch
+            if torch.cuda.is_available():
+                device = 'cuda'
+            elif torch.backends.mps.is_available():
+                device = 'mps'
+            else:
+                device = 'cpu'
+            
+            # Simply run the inference command to generate aorta files
+            import subprocess
+            cmd = [
+                'python', __file__,
+                '--module', 'aorta',
+                '--input_file', input_file,
+                '--output_dir', output_dir,
+                '--output_format', 'nii',
+                '--output_size', '2048'
+            ]
+            subprocess.run(cmd, capture_output=True)
+            
+            # The aorta module should have created the asc and desc files
+            # Add them to temp files for cleanup
+            if os.path.exists(asc_file):
+                temp_files.append(asc_file)
+            if os.path.exists(desc_file):
+                temp_files.append(desc_file)
+            
+            # Add the combined aorta file to temp files for cleanup
+            combined_file = os.path.join(output_dir, f"{input_basename}_aorta.nii")
+            if os.path.exists(combined_file):
+                temp_files.append(combined_file)
+        
         if not os.path.exists(asc_file) and not os.path.exists(desc_file):
-            raise Exception("Diameter calculation requires aorta masks. Please run aorta module first with --output_size 2048 --output_format nii")
+            raise Exception("Diameter calculation requires aorta masks. Failed to create aorta segmentation.")
         
         # Import the diameter calculation function
         sys.path.append(os.path.join(os.path.dirname(__file__), 'src', 'insights'))
@@ -2488,10 +2622,29 @@ def process_diameter_module(input_file, output_dir, input_basename, all_results)
             if len(max_diameters) >= 2:
                 all_results['diameter']['aorta_descending_diameter_mm'] = round(max_diameters[1], 1)
                 print(f"Descending aorta diameter: {max_diameters[1]:.1f} mm")
+        
+        # Clean up temporary files and diameter_results folder
+        for temp_file in temp_files:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+        
+        # Clean up diameter_results folder
+        if 'diameter_output_dir' in locals() and os.path.exists(diameter_output_dir):
+            import shutil
+            shutil.rmtree(diameter_output_dir)
                 
     except Exception as e:
         print(f"✗ Diameter calculation failed: {str(e)}")
         all_results['diameter'] = {'error': str(e)}
+        
+        # Clean up temp files and folder even on error
+        for temp_file in temp_files if 'temp_files' in locals() else []:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+        
+        if 'diameter_output_dir' in locals() and os.path.exists(diameter_output_dir):
+            import shutil
+            shutil.rmtree(diameter_output_dir)
 
 
 def main():
@@ -2543,11 +2696,11 @@ def main():
     
     # Determine which modules to run
     if args.all_modules:
-        # Run all segmentation modules (post-processing modules like ctr, peripheral, diameter are separate)
+        # Run all segmentation modules first, then post-processing modules
         modules_to_run = ['lung', 'heart', 'airway', 'bone', 
-                         'aorta', 't12l1', 'laa', 'tb', 'bone_supp', 'covid', 'vessel']
-        print(f"Running all segmentation modules: {', '.join(modules_to_run)}")
-        print("Note: Post-processing modules (ctr, peripheral, diameter) must be run separately")
+                         'aorta', 't12l1', 'laa', 'tb', 'bone_supp', 'covid', 'vessel',
+                         'ctr', 'peripheral', 'diameter']  # Post-processing modules added at the end
+        print(f"Running all modules including post-processing: {', '.join(modules_to_run)}")
     else:
         modules_to_run = [args.module]
     
@@ -2776,6 +2929,33 @@ def main():
                         measurements_data['tb_probability'] = round(module_results['probability'], 4)
                     if 'prediction' in module_results:
                         measurements_data['tb_classification'] = 'Positive' if module_results['prediction'] else 'Negative'
+                
+                # CTR (Cardiothoracic Ratio) results
+                elif module == 'ctr':
+                    if 'cardiothoracic_ratio' in module_results:
+                        measurements_data['cardiothoracic_ratio'] = round(module_results['cardiothoracic_ratio'], 3)
+                    if 'mhtd_mm' in module_results:
+                        measurements_data['mhtd_mm'] = round(module_results['mhtd_mm'], 2)
+                    if 'mhcd_mm' in module_results:
+                        measurements_data['mhcd_mm'] = round(module_results['mhcd_mm'], 2)
+                
+                # Peripheral lung measurements
+                elif module == 'peripheral':
+                    if 'peripheral_total_area_cm2' in module_results:
+                        measurements_data['peripheral_total_area_cm2'] = round(module_results['peripheral_total_area_cm2'], 2)
+                    if 'peripheral_central_area_cm2' in module_results:
+                        measurements_data['peripheral_central_area_cm2'] = round(module_results['peripheral_central_area_cm2'], 2)
+                    if 'peripheral_mid_area_cm2' in module_results:
+                        measurements_data['peripheral_mid_area_cm2'] = round(module_results['peripheral_mid_area_cm2'], 2)
+                    if 'peripheral_outer_area_cm2' in module_results:
+                        measurements_data['peripheral_outer_area_cm2'] = round(module_results['peripheral_outer_area_cm2'], 2)
+                
+                # Diameter measurements
+                elif module == 'diameter':
+                    if 'aorta_ascending_diameter_mm' in module_results:
+                        measurements_data['aorta_ascending_diameter_mm'] = round(module_results['aorta_ascending_diameter_mm'], 1)
+                    if 'aorta_descending_diameter_mm' in module_results:
+                        measurements_data['aorta_descending_diameter_mm'] = round(module_results['aorta_descending_diameter_mm'], 1)
         
         # Debug: print all measurements before CSV creation
         print(f"\nDEBUG: Final measurements being saved to CSV:")
