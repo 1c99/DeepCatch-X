@@ -1218,6 +1218,20 @@ class UnifiedDCXInference:
             ds.PixelData = output_data.tobytes()
             ds.Rows, ds.Columns = output_data.shape
             
+            # Set PhotometricInterpretation for proper display
+            # For segmentation masks, we use MONOCHROME2 (higher values = brighter)
+            ds.PhotometricInterpretation = "MONOCHROME2"
+            
+            # Ensure BitsStored matches the data type
+            if dicom_dtype == np.uint16:
+                ds.BitsStored = 16
+                ds.BitsAllocated = 16
+                ds.HighBit = 15
+            elif dicom_dtype == np.int16:
+                ds.BitsStored = 16
+                ds.BitsAllocated = 16
+                ds.HighBit = 15
+            
             # Remove window settings to let viewer auto-adjust
             # Most medical viewers handle this better than hardcoded values
             if hasattr(ds, 'WindowCenter'):
