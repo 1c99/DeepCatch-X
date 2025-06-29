@@ -1166,6 +1166,10 @@ class UnifiedDCXInference:
         # Get 2D array from 4D segmentation output
         output_2d = output[0, 0]  # Extract 2D array
         
+        # Transpose for COVID and vessel modules (lung-based modules)
+        if self.module_name in ['covid', 'vessel']:
+            output_2d = np.transpose(output_2d)
+        
         # Use the optimized DICOM creation function
         self._create_dicom_file_optimized(output_2d, self._original_dicom_path, output_path)
     
