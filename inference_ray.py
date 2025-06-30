@@ -728,8 +728,8 @@ def process_post_module(module, input_file, output_dir, output_format, all_resul
             if os.path.exists(desc_file):
                 diameter_file_dict[input_basename].append(os.path.basename(desc_file))
             
-            # Create output directory for diameter results
-            diameter_output_dir = os.path.join(output_dir, 'diameter_results')
+            # Create output directory for diameter results with unique subfolder for each file
+            diameter_output_dir = os.path.join(output_dir, 'diameter_results', input_basename)
             os.makedirs(diameter_output_dir, exist_ok=True)
             
             try:
@@ -752,7 +752,7 @@ def process_post_module(module, input_file, output_dir, output_format, all_resul
                     if len(max_diameters) >= 2:
                         diameter_results['aorta_descending_diameter_mm'] = round(max_diameters[1], 1)
                 
-                # Clean up diameter_results folder
+                # Clean up only this file's diameter_results subfolder
                 import shutil
                 if os.path.exists(diameter_output_dir):
                     shutil.rmtree(diameter_output_dir)
@@ -765,7 +765,7 @@ def process_post_module(module, input_file, output_dir, output_format, all_resul
                 }
                 
             except Exception as e:
-                # Clean up on error
+                # Clean up only this file's diameter_results subfolder on error
                 import shutil
                 if os.path.exists(diameter_output_dir):
                     shutil.rmtree(diameter_output_dir)
@@ -1027,7 +1027,8 @@ def main():
     # Collect measurements if requested
     if args.collect_measurements and successful > 0:
         print("\nCollecting measurements into CSV...")
-        from src.utils.measurement_collector import create_comprehensive_csv
+        import csv
+        from collections import OrderedDict
         
         # Group results by file
         from collections import defaultdict
@@ -1036,89 +1037,138 @@ def main():
             if r['status'] == 'success' and 'results' in r:
                 file_results[r['file']][r['module']] = r['results']
         
-        # Create CSV for each file
-        for input_file, modules_results in file_results.items():
-            measurements_data = {}
+        # Collect all measurements for all files
+        all_measurements = []
+        all_columns = OrderedDict()
+        
+        # Always include these columns first
+        for col in ['patient_id', 'dicom_file', 'processing_date']:
+            all_columns[col] = True
+        
+        # Process each file
+        for input_file, modules_results in sorted(file_results.items()):
+            measurements_data = OrderedDict()
             measurements_data['patient_id'] = os.path.splitext(os.path.basename(input_file))[0]
-            measurements_data['processing_date'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             measurements_data['dicom_file'] = os.path.basename(input_file)
+            measurements_data['processing_date'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
             # Collect all measurements from all modules
-            for module, module_results in modules_results.items():
+            for module, module_results in sorted(modules_results.items()):
                 if isinstance(module_results, dict):
                     # Area measurements
                     if 'area' in module_results:
-                        measurements_data[f'{module}_area_cm2'] = round(module_results['area'], 2)
+                        col_name = f'{module}_area_cm2'
+                        measurements_data[col_name] = round(module_results['area'], 2)
+                        all_columns[col_name] = True
                     
                     # Volume measurements
                     if 'volume' in module_results and module in ['heart', 'lung']:
-                        measurements_data[f'{module}_volume_ml'] = round(module_results['volume'], 2)
-                        measurements_data[f'{module}_volume_l'] = round(module_results['volume']/1000, 3)
+                        col_name_ml = f'{module}_volume_ml'
+                        col_name_l = f'{module}_volume_l'
+                        measurements_data[col_name_ml] = round(module_results['volume'], 2)
+                        measurements_data[col_name_l] = round(module_results['volume']/1000, 3)
+                        all_columns[col_name_ml] = True
+                        all_columns[col_name_l] = True
                     
                     # Metadata
                     for key in ['pixel_spacing_mm', 'image_height', 'image_width']:
                         if key in module_results and key not in measurements_data:
                             measurements_data[key] = module_results[key]
+                            all_columns[key] = True
                     
                     # Special module measurements
                     if module == 't12l1' or module == 't12l1_regression':
                         if 'area_t12' in module_results:
                             measurements_data['t12_area_cm2'] = round(module_results['area_t12'], 2)
+                            all_columns['t12_area_cm2'] = True
                         if 'area_l1' in module_results:
                             measurements_data['l1_area_cm2'] = round(module_results['area_l1'], 2)
+                            all_columns['l1_area_cm2'] = True
                         if 'area_t12_pixels' in module_results:
                             measurements_data['t12_area_pixels'] = module_results['area_t12_pixels']
+                            all_columns['t12_area_pixels'] = True
                         if 'area_l1_pixels' in module_results:
                             measurements_data['l1_area_pixels'] = module_results['area_l1_pixels']
+                            all_columns['l1_area_pixels'] = True
                         if 'bone_density_t12' in module_results:
                             measurements_data['bone_density_t12'] = round(module_results['bone_density_t12'], 2)
+                            all_columns['bone_density_t12'] = True
                         if 'bone_density_l1' in module_results:
                             measurements_data['bone_density_l1'] = round(module_results['bone_density_l1'], 2)
+                            all_columns['bone_density_l1'] = True
                     
                     elif module == 'laa':
                         if 'emphysema_probability' in module_results:
                             measurements_data['laa_emphysema_probability'] = round(module_results['emphysema_probability'], 4)
+                            all_columns['laa_emphysema_probability'] = True
                         if 'emphysema_classification' in module_results:
                             measurements_data['laa_emphysema_classification'] = module_results['emphysema_classification']
+                            all_columns['laa_emphysema_classification'] = True
                         if 'emphysema_area' in module_results:
                             measurements_data['laa_emphysema_area_cm2'] = round(module_results['emphysema_area'], 2)
+                            all_columns['laa_emphysema_area_cm2'] = True
                         if 'laa_percentage' in module_results:
                             measurements_data['laa_percentage'] = round(module_results['laa_percentage'], 2)
+                            all_columns['laa_percentage'] = True
                     
                     elif module == 'tb':
                         if 'probability' in module_results:
                             measurements_data['tb_probability'] = round(module_results['probability'], 4)
+                            all_columns['tb_probability'] = True
                         if 'prediction' in module_results:
                             measurements_data['tb_classification'] = 'Positive' if module_results['prediction'] else 'Negative'
+                            all_columns['tb_classification'] = True
                     
                     elif module == 'ctr':
                         if 'cardiothoracic_ratio' in module_results:
                             measurements_data['cardiothoracic_ratio'] = round(module_results['cardiothoracic_ratio'], 3)
+                            all_columns['cardiothoracic_ratio'] = True
                         if 'mhtd_mm' in module_results:
                             measurements_data['mhtd_mm'] = round(module_results['mhtd_mm'], 2)
+                            all_columns['mhtd_mm'] = True
                         if 'mhcd_mm' in module_results:
                             measurements_data['mhcd_mm'] = round(module_results['mhcd_mm'], 2)
+                            all_columns['mhcd_mm'] = True
                         if 'lung_width_mm' in module_results:
                             measurements_data['lung_width_mm'] = round(module_results['lung_width_mm'], 2)
+                            all_columns['lung_width_mm'] = True
                         if 'heart_width_mm' in module_results:
                             measurements_data['heart_width_mm'] = round(module_results['heart_width_mm'], 2)
+                            all_columns['heart_width_mm'] = True
                     
                     elif module == 'peripheral':
                         for key in ['peripheral_total_area_cm2', 'peripheral_central_area_cm2',
                                    'peripheral_mid_area_cm2', 'peripheral_outer_area_cm2']:
                             if key in module_results:
                                 measurements_data[key] = round(module_results[key], 2)
+                                all_columns[key] = True
                     
                     elif module == 'diameter':
                         if 'aorta_ascending_diameter_mm' in module_results:
                             measurements_data['aorta_ascending_diameter_mm'] = round(module_results['aorta_ascending_diameter_mm'], 1)
+                            all_columns['aorta_ascending_diameter_mm'] = True
                         if 'aorta_descending_diameter_mm' in module_results:
                             measurements_data['aorta_descending_diameter_mm'] = round(module_results['aorta_descending_diameter_mm'], 1)
+                            all_columns['aorta_descending_diameter_mm'] = True
             
-            csv_path, _ = create_comprehensive_csv(
-                args.output_dir, os.path.basename(input_file), measurements_data 
-            )
-            print(f"  Measurements saved: {csv_path}")
+            all_measurements.append(measurements_data)
+        
+        # Write single CSV file with all measurements
+        csv_filename = f"dcx_measurements_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        csv_path = os.path.join(args.output_dir, csv_filename)
+        
+        with open(csv_path, 'w', newline='') as csvfile:
+            fieldnames = list(all_columns.keys())
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            writer.writeheader()
+            for measurements in all_measurements:
+                # Fill in empty values for missing columns
+                row = {col: measurements.get(col, '') for col in fieldnames}
+                writer.writerow(row)
+        
+        print(f"  All measurements saved to: {csv_path}")
+        print(f"  Total rows: {len(all_measurements)}")
     
     print(f"\nProcessing complete! Results saved to: {args.output_dir}")
     
@@ -1146,6 +1196,16 @@ def main():
                 print(f"  Removed: {os.path.basename(temp_file)}")
             except Exception as e:
                 print(f"  Failed to remove {os.path.basename(temp_file)}: {e}")
+    
+    # Clean up the main diameter_results folder if it exists
+    diameter_results_folder = os.path.join(args.output_dir, 'diameter_results')
+    if os.path.exists(diameter_results_folder):
+        import shutil
+        try:
+            shutil.rmtree(diameter_results_folder)
+            print(f"  Removed: diameter_results folder")
+        except Exception as e:
+            print(f"  Failed to remove diameter_results folder: {e}")
     
     # Shutdown Ray
     ray.shutdown()
