@@ -18,4 +18,9 @@ __pycache__/
 .ipynb_checkpoints/
 
 # OS files
-.DS_Store
+.DS_Store*.mipx
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.pkl
