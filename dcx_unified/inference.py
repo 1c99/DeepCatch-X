@@ -2657,8 +2657,8 @@ def main():
                        help='Module to use for inference (required unless --all_modules is used)')
     parser.add_argument('--all_modules', action='store_true',
                        help='Run all segmentation modules in a single execution')
-    parser.add_argument('--input_file', type=str, required=True,
-                       help='Path to input DICOM file')
+    parser.add_argument('--input_path', type=str, required=True,
+                       help='Path to input DICOM file or directory containing DICOM files')
     parser.add_argument('--output_dir', type=str, required=True,
                        help='Path to output directory')
     parser.add_argument('--lung_mask', type=str, default=None,
@@ -2704,276 +2704,311 @@ def main():
     else:
         modules_to_run = [args.module]
     
-    # Process each module
-    all_results = {}
-    # Get input basename for all modules
-    input_basename = os.path.splitext(os.path.basename(args.input_file))[0]
+    # Determine input files
+    input_files = []
+    if os.path.isfile(args.input_path):
+        # Single file
+        input_files = [args.input_path]
+        print(f"Processing single file: {args.input_path}")
+    elif os.path.isdir(args.input_path):
+        # Directory - find all DICOM files
+        dicom_patterns = ['*.dcm', '*.DCM', '*.dicom', '*.DICOM']
+        for pattern in dicom_patterns:
+            input_files.extend(glob.glob(os.path.join(args.input_path, pattern)))
+        # Remove duplicates and sort
+        input_files = sorted(list(set(input_files)))
+        print(f"Found {len(input_files)} DICOM files in directory: {args.input_path}")
+        if not input_files:
+            print("No DICOM files found in the input directory!")
+            return
+    else:
+        print(f"Error: Input path does not exist: {args.input_path}")
+        return
     
-    for module in modules_to_run:
-        print(f"\n{'='*60}")
-        print(f"Processing module: {module}")
-        print(f"{'='*60}")
+    # Process each input file
+    for file_idx, input_file in enumerate(input_files):
+        print(f"\n{'#'*80}")
+        print(f"Processing file {file_idx + 1}/{len(input_files)}: {os.path.basename(input_file)}")
+        print(f"{'#'*80}")
         
-        try:
-            # Handle special post-processing modules
-            if module == 'ctr':
-                # CTR requires heart and lung masks
-                print("Calculating Cardiothoracic Ratio (CTR)...")
-                process_ctr_module(args.input_file, args.output_dir, input_basename, all_results)
-                continue
-            elif module == 'peripheral':
-                # Peripheral requires lung mask
-                print("Generating peripheral lung masks...")
-                process_peripheral_module(args.input_file, args.output_dir, input_basename, args.output_format, all_results)
-                continue
-            elif module == 'diameter':
-                # Diameter requires aorta mask
-                print("Calculating aorta diameter...")
-                process_diameter_module(args.input_file, args.output_dir, input_basename, all_results)
-                continue
-            
-            # Get config path - handle aorta0/aorta1 mapping to aorta config
-            base_module = module
-            if module in ['aorta0', 'aorta1']:
-                base_module = 'aorta'
-            config_path = os.path.join(os.path.dirname(__file__), 'configs', f'{base_module}.yaml')
-            
-            # Handle output format and file extensions
-            if module == 'bone_supp':
-                # Bone suppression supports all formats now
-                extension = args.output_format
-                output_filename = f"{input_basename}_{module}.{extension}"
-            elif module in ['tb']:
-                # TB outputs lung-segmented image for visualization
-                extension = args.output_format
-                output_filename = f"{input_basename}_{module}.{extension}"
-            elif module == 'aorta0':
-                # Ascending aorta
-                extension = args.output_format
-                output_filename = f"{input_basename}_aorta_asc.{extension}"
-            elif module == 'aorta1':
-                # Descending aorta
-                extension = args.output_format
-                output_filename = f"{input_basename}_aorta_desc.{extension}"
-            else:
-                # Use user-specified format
-                extension = args.output_format
-                output_filename = f"{input_basename}_{module}.{extension}"
-            
-            output_file = os.path.join(args.output_dir, output_filename)
-            
-            # Use requested output size (don't force 2048 for aorta anymore)
-            output_size_override = args.output_size
-            
-            # Create inference object and process
-            # Use unified CSV when collect_measurements is enabled
-            inference = UnifiedDCXInference(config_path, args.device, args.output_format, output_size_override, module, 
-                                          unified_csv=args.collect_measurements, batch_mode=args.all_modules)
-            
-            # Skip calculations if requested
-            if args.no_calculations:
-                # Temporarily disable calculations in config
-                inference.config['calculate_area'] = False
-                inference.config['calculate_volume'] = False
-            else:
-                # Volume calculations only for modules with regression models
-                volume_modules = ['heart', 'lung', 'heart_volumetry', 'lung_volumetry', 't12l1_regression']
-                if module not in volume_modules:
-                    inference.config['calculate_volume'] = False
-            
-            # Auto-detect lung mask for covid/vessel modules
-            lung_mask_path = args.lung_mask
-            if module in ['covid', 'vessel'] and not lung_mask_path:
-                # First try to find lung mask with same basename as input
-                input_basename = os.path.splitext(os.path.basename(args.input_file))[0]
-                
-                # Look for lung mask with matching basename in priority order
-                potential_lung_files = [
-                    os.path.join(args.output_dir, f'{input_basename}_lung.{args.output_format}'),  # Same format as requested
-                    os.path.join(args.output_dir, f'{input_basename}_lung.nii'),  # NIfTI fallback
-                    os.path.join(args.output_dir, f'{input_basename}_lung.png'),  # PNG fallback
-                    os.path.join(args.output_dir, f'{input_basename}_lung.dcm')   # DICOM fallback
-                ]
-                
-                # Find first existing file
-                for potential_file in potential_lung_files:
-                    if os.path.exists(potential_file):
-                        lung_mask_path = potential_file
-                        print(f"🔍 Auto-detected lung mask for {module}: {lung_mask_path}")
-                        break
-                
-                # If no exact match, look for any lung files (batch mode fallback)
-                if not lung_mask_path:
-                    lung_files = (glob.glob(os.path.join(args.output_dir, f'*lung.{args.output_format}')) or
-                                 glob.glob(os.path.join(args.output_dir, '*lung.nii')) or  # fallback to nii
-                                 glob.glob(os.path.join(args.output_dir, '*lung.*')))  # any format as last resort
-                    if lung_files:
-                        lung_mask_path = lung_files[0]
-                        print(f"🔍 Auto-detected lung mask for {module}: {lung_mask_path}")
-                
-                # Warning if still no lung mask found
-                if not lung_mask_path:
-                    print(f"⚠ No lung mask found for {module} module. Please run lung segmentation first or provide --lung_mask parameter.")
-            
-            results = inference.process(args.input_file, output_file, lung_mask_path)
-            all_results[module] = results
-            
-            print(f"✓ Module {module} completed successfully")
-            
-        except Exception as e:
-            print(f"✗ Module {module} failed: {str(e)}")
-            import traceback
-            print(f"Full traceback: {traceback.format_exc()}")
-            all_results[module] = {'error': str(e)}
-            continue
-    
-    # Summarize results
-    print(f"\n{'='*60}")
-    print("BATCH PROCESSING SUMMARY")
-    print(f"{'='*60}")
-    successful_modules = [m for m, r in all_results.items() if 'error' not in r]
-    failed_modules = [m for m, r in all_results.items() if 'error' in r]
-    
-    print(f"Successful modules ({len(successful_modules)}): {', '.join(successful_modules)}")
-    if failed_modules:
-        print(f"Failed modules ({len(failed_modules)}): {', '.join(failed_modules)}")
-    
-    # Use results from the first successful module or single module for postprocessing
-    results = all_results.get(modules_to_run[0], {}) if modules_to_run else {}
-    
-    # Postprocessing removed - focusing on segmentation and regression only
-    
-    # Collect measurements into CSV if requested
-    if args.collect_measurements and not args.no_calculations:
-        print("\nCollecting measurements into CSV...")
-        from src.utils.measurement_collector import create_comprehensive_csv
+        # Process each module
+        all_results = {}
+        # Get input basename for all modules
+        input_basename = os.path.splitext(os.path.basename(input_file))[0]
         
-        # Extract measurements from all module results
-        measurements_data = {}
-        
-        # Add basic metadata
-        measurements_data['patient_id'] = os.path.splitext(os.path.basename(args.input_file))[0]
-        measurements_data['processing_date'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        measurements_data['dicom_file'] = os.path.basename(args.input_file)
-        
-        for module, module_results in all_results.items():
-            if 'error' not in module_results:
-                # Basic area measurements
-                if 'area' in module_results:
-                    measurements_data[f'{module}_area_cm2'] = round(module_results['area'], 2)
-                
-                # Volume measurements for modules with regression models
-                volume_modules = ['heart', 'lung']
-                if 'volume' in module_results and module in volume_modules:
-                    measurements_data[f'{module}_volume_ml'] = round(module_results['volume'], 2)
-                    measurements_data[f'{module}_volume_l'] = round(module_results['volume']/1000, 3)
-                
-                # Extract metadata
-                for key in ['pixel_spacing_mm', 'image_height', 'image_width']:
-                    if key in module_results:
-                        measurements_data[key] = module_results[key]
-                
-                # Handle COVID and vessel results from lung module
-                if module == 'lung':
-                    if 'covid' in module_results and 'error' not in module_results['covid']:
-                        covid_data = module_results['covid']
-                        if 'area' in covid_data:
-                            measurements_data['covid_area_cm2'] = round(covid_data['area'], 2)
-                    
-                    if 'vessel' in module_results and 'error' not in module_results['vessel']:
-                        vessel_data = module_results['vessel']
-                        if 'area' in vessel_data:
-                            measurements_data['vessel_area_cm2'] = round(vessel_data['area'], 2)
-                    
-                    # Peripheral measurements
-                    for key in ['peripheral_total_area_cm2', 'peripheral_central_area_cm2', 
-                               'peripheral_mid_area_cm2', 'peripheral_outer_area_cm2']:
-                        if key in module_results:
-                            measurements_data[key] = round(module_results[key], 2)
-                
-                # Heart measurements (CTR)
-                elif module == 'heart':
-                    if 'ctr' in module_results:
-                        measurements_data['cardiothoracic_ratio'] = round(module_results['ctr'], 3)
-                    if 'mhtd_mm' in module_results:
-                        measurements_data['mhtd_mm'] = round(module_results['mhtd_mm'], 2)
-                    if 'mhcd_mm' in module_results:
-                        measurements_data['mhcd_mm'] = round(module_results['mhcd_mm'], 2)
-                
-                # Aorta measurements
-                elif module == 'aorta':
-                    if 'aorta_ascending_diameter_mm' in module_results:
-                        measurements_data['aorta_ascending_diameter_mm'] = round(module_results['aorta_ascending_diameter_mm'], 1)
-                    if 'aorta_descending_diameter_mm' in module_results:
-                        measurements_data['aorta_descending_diameter_mm'] = round(module_results['aorta_descending_diameter_mm'], 1)
-                
-                # T12L1 measurements
-                elif module == 't12l1':
-                    if 'area_t12' in module_results:
-                        measurements_data['t12_area_cm2'] = round(module_results['area_t12'], 2)
-                    if 'area_l1' in module_results:
-                        measurements_data['l1_area_cm2'] = round(module_results['area_l1'], 2)
-                
-                # LAA measurements
-                elif module == 'laa':
-                    if 'emphysema_prob' in module_results:
-                        measurements_data['laa_emphysema_probability'] = round(module_results['emphysema_prob'], 4)
-                    if 'desc' in module_results:
-                        measurements_data['laa_emphysema_classification'] = module_results['desc']
-                    if 'area' in module_results:
-                        measurements_data['laa_emphysema_area_cm2'] = round(module_results['area'], 2)
-                
-                # TB measurements
-                elif module == 'tb':
-                    if 'probability' in module_results:
-                        measurements_data['tb_probability'] = round(module_results['probability'], 4)
-                    if 'prediction' in module_results:
-                        measurements_data['tb_classification'] = 'Positive' if module_results['prediction'] else 'Negative'
-                
-                # CTR (Cardiothoracic Ratio) results
-                elif module == 'ctr':
-                    if 'cardiothoracic_ratio' in module_results:
-                        measurements_data['cardiothoracic_ratio'] = round(module_results['cardiothoracic_ratio'], 3)
-                    if 'mhtd_mm' in module_results:
-                        measurements_data['mhtd_mm'] = round(module_results['mhtd_mm'], 2)
-                    if 'mhcd_mm' in module_results:
-                        measurements_data['mhcd_mm'] = round(module_results['mhcd_mm'], 2)
-                
-                # Peripheral lung measurements
+        for module in modules_to_run:
+            print(f"\n{'='*60}")
+            print(f"Processing module: {module}")
+            print(f"{'='*60}")
+            
+            try:
+                # Handle special post-processing modules
+                if module == 'ctr':
+                    # CTR requires heart and lung masks
+                    print("Calculating Cardiothoracic Ratio (CTR)...")
+                    process_ctr_module(input_file, args.output_dir, input_basename, all_results)
+                    continue
                 elif module == 'peripheral':
-                    if 'peripheral_total_area_cm2' in module_results:
-                        measurements_data['peripheral_total_area_cm2'] = round(module_results['peripheral_total_area_cm2'], 2)
-                    if 'peripheral_central_area_cm2' in module_results:
-                        measurements_data['peripheral_central_area_cm2'] = round(module_results['peripheral_central_area_cm2'], 2)
-                    if 'peripheral_mid_area_cm2' in module_results:
-                        measurements_data['peripheral_mid_area_cm2'] = round(module_results['peripheral_mid_area_cm2'], 2)
-                    if 'peripheral_outer_area_cm2' in module_results:
-                        measurements_data['peripheral_outer_area_cm2'] = round(module_results['peripheral_outer_area_cm2'], 2)
-                
-                # Diameter measurements
+                    # Peripheral requires lung mask
+                    print("Generating peripheral lung masks...")
+                    process_peripheral_module(input_file, args.output_dir, input_basename, args.output_format, all_results)
+                    continue
                 elif module == 'diameter':
-                    if 'aorta_ascending_diameter_mm' in module_results:
-                        measurements_data['aorta_ascending_diameter_mm'] = round(module_results['aorta_ascending_diameter_mm'], 1)
-                    if 'aorta_descending_diameter_mm' in module_results:
-                        measurements_data['aorta_descending_diameter_mm'] = round(module_results['aorta_descending_diameter_mm'], 1)
-        
-        # Debug: print all measurements before CSV creation
-        print(f"\nDEBUG: Final measurements being saved to CSV:")
-        for key, value in sorted(measurements_data.items()):
-            print(f"  {key}: {value}")
-        
-        # Create comprehensive CSV
-        dicom_filename = os.path.basename(args.input_file)
-        csv_path, _ = create_comprehensive_csv(
-            args.output_dir, dicom_filename, measurements_data
-        )
-        
-        print(f"All measurements collected in: {csv_path}")
-    elif args.collect_measurements and args.no_calculations:
-        print("CSV collection skipped due to --no_calculations flag")
+                    # Diameter requires aorta mask
+                    print("Calculating aorta diameter...")
+                    process_diameter_module(input_file, args.output_dir, input_basename, all_results)
+                    continue
+                
+                # Get config path - handle aorta0/aorta1 mapping to aorta config
+                base_module = module
+                if module in ['aorta0', 'aorta1']:
+                    base_module = 'aorta'
+                config_path = os.path.join(os.path.dirname(__file__), 'configs', f'{base_module}.yaml')
+                
+                # Handle output format and file extensions
+                if module == 'bone_supp':
+                    # Bone suppression supports all formats now
+                    extension = args.output_format
+                    output_filename = f"{input_basename}_{module}.{extension}"
+                elif module in ['tb']:
+                    # TB outputs lung-segmented image for visualization
+                    extension = args.output_format
+                    output_filename = f"{input_basename}_{module}.{extension}"
+                elif module == 'aorta0':
+                    # Ascending aorta
+                    extension = args.output_format
+                    output_filename = f"{input_basename}_aorta_asc.{extension}"
+                elif module == 'aorta1':
+                    # Descending aorta
+                    extension = args.output_format
+                    output_filename = f"{input_basename}_aorta_desc.{extension}"
+                else:
+                    # Use user-specified format
+                    extension = args.output_format
+                    output_filename = f"{input_basename}_{module}.{extension}"
+                
+                output_file = os.path.join(args.output_dir, output_filename)
+                
+                # Use requested output size (don't force 2048 for aorta anymore)
+                output_size_override = args.output_size
+                
+                # Create inference object and process
+                # Use unified CSV when collect_measurements is enabled
+                inference = UnifiedDCXInference(config_path, args.device, args.output_format, output_size_override, module, 
+                                              unified_csv=args.collect_measurements, batch_mode=args.all_modules)
+                
+                # Skip calculations if requested
+                if args.no_calculations:
+                    # Temporarily disable calculations in config
+                    inference.config['calculate_area'] = False
+                    inference.config['calculate_volume'] = False
+                else:
+                    # Volume calculations only for modules with regression models
+                    volume_modules = ['heart', 'lung', 'heart_volumetry', 'lung_volumetry', 't12l1_regression']
+                    if module not in volume_modules:
+                        inference.config['calculate_volume'] = False
+                
+                # Auto-detect lung mask for covid/vessel modules
+                lung_mask_path = args.lung_mask
+                if module in ['covid', 'vessel'] and not lung_mask_path:
+                    # First try to find lung mask with same basename as input
+                    # input_basename already defined above
+                    
+                    # Look for lung mask with matching basename in priority order
+                    potential_lung_files = [
+                        os.path.join(args.output_dir, f'{input_basename}_lung.{args.output_format}'),  # Same format as requested
+                        os.path.join(args.output_dir, f'{input_basename}_lung.nii'),  # NIfTI fallback
+                        os.path.join(args.output_dir, f'{input_basename}_lung.png'),  # PNG fallback
+                        os.path.join(args.output_dir, f'{input_basename}_lung.dcm')   # DICOM fallback
+                    ]
+                    
+                    # Find first existing file
+                    for potential_file in potential_lung_files:
+                        if os.path.exists(potential_file):
+                            lung_mask_path = potential_file
+                            print(f"🔍 Auto-detected lung mask for {module}: {lung_mask_path}")
+                            break
+                    
+                    # If no exact match, look for any lung files (batch mode fallback)
+                    if not lung_mask_path:
+                        lung_files = (glob.glob(os.path.join(args.output_dir, f'*lung.{args.output_format}')) or
+                                     glob.glob(os.path.join(args.output_dir, '*lung.nii')) or  # fallback to nii
+                                     glob.glob(os.path.join(args.output_dir, '*lung.*')))  # any format as last resort
+                        if lung_files:
+                            lung_mask_path = lung_files[0]
+                            print(f"🔍 Auto-detected lung mask for {module}: {lung_mask_path}")
+                    
+                    # Warning if still no lung mask found
+                    if not lung_mask_path:
+                        print(f"⚠ No lung mask found for {module} module. Please run lung segmentation first or provide --lung_mask parameter.")
+                
+                results = inference.process(input_file, output_file, lung_mask_path)
+                all_results[module] = results
+                
+                print(f"✓ Module {module} completed successfully")
+                
+            except Exception as e:
+                print(f"✗ Module {module} failed: {str(e)}")
+                import traceback
+                print(f"Full traceback: {traceback.format_exc()}")
+                all_results[module] = {'error': str(e)}
+                continue
     
-    print(f"\nProcessing complete! Generated {len([m for m in all_results.values() if 'error' not in m])} masks"
-          f"{' with measurements' if args.collect_measurements and not args.no_calculations else ''}")
+        # Summarize results for this file
+        print(f"\n{'='*60}")
+        print(f"FILE PROCESSING SUMMARY: {os.path.basename(input_file)}")
+        print(f"{'='*60}")
+        successful_modules = [m for m, r in all_results.items() if 'error' not in r]
+        failed_modules = [m for m, r in all_results.items() if 'error' in r]
+        
+        print(f"Successful modules ({len(successful_modules)}): {', '.join(successful_modules)}")
+        if failed_modules:
+            print(f"Failed modules ({len(failed_modules)}): {', '.join(failed_modules)}")
+        
+        # Use results from the first successful module or single module for postprocessing
+        results = all_results.get(modules_to_run[0], {}) if modules_to_run else {}
+        
+        # Postprocessing removed - focusing on segmentation and regression only
+        
+        # Collect measurements into CSV if requested
+        if args.collect_measurements and not args.no_calculations:
+            print("\nCollecting measurements into CSV...")
+            from src.utils.measurement_collector import create_comprehensive_csv
+            
+            # Extract measurements from all module results
+            measurements_data = {}
+            
+            # Add basic metadata
+            measurements_data['patient_id'] = os.path.splitext(os.path.basename(input_file))[0]
+            measurements_data['processing_date'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            measurements_data['dicom_file'] = os.path.basename(input_file)
+            
+            for module, module_results in all_results.items():
+                if 'error' not in module_results:
+                    # Basic area measurements
+                    if 'area' in module_results:
+                        measurements_data[f'{module}_area_cm2'] = round(module_results['area'], 2)
+                    
+                    # Volume measurements for modules with regression models
+                    volume_modules = ['heart', 'lung']
+                    if 'volume' in module_results and module in volume_modules:
+                        measurements_data[f'{module}_volume_ml'] = round(module_results['volume'], 2)
+                        measurements_data[f'{module}_volume_l'] = round(module_results['volume']/1000, 3)
+                    
+                    # Extract metadata
+                    for key in ['pixel_spacing_mm', 'image_height', 'image_width']:
+                        if key in module_results:
+                            measurements_data[key] = module_results[key]
+                    
+                    # Handle COVID and vessel results from lung module
+                    if module == 'lung':
+                        if 'covid' in module_results and 'error' not in module_results['covid']:
+                            covid_data = module_results['covid']
+                            if 'area' in covid_data:
+                                measurements_data['covid_area_cm2'] = round(covid_data['area'], 2)
+                        
+                        if 'vessel' in module_results and 'error' not in module_results['vessel']:
+                            vessel_data = module_results['vessel']
+                            if 'area' in vessel_data:
+                                measurements_data['vessel_area_cm2'] = round(vessel_data['area'], 2)
+                        
+                        # Peripheral measurements
+                        for key in ['peripheral_total_area_cm2', 'peripheral_central_area_cm2', 
+                                   'peripheral_mid_area_cm2', 'peripheral_outer_area_cm2']:
+                            if key in module_results:
+                                measurements_data[key] = round(module_results[key], 2)
+                    
+                    # Heart measurements (CTR)
+                    elif module == 'heart':
+                        if 'ctr' in module_results:
+                            measurements_data['cardiothoracic_ratio'] = round(module_results['ctr'], 3)
+                        if 'mhtd_mm' in module_results:
+                            measurements_data['mhtd_mm'] = round(module_results['mhtd_mm'], 2)
+                        if 'mhcd_mm' in module_results:
+                            measurements_data['mhcd_mm'] = round(module_results['mhcd_mm'], 2)
+                    
+                    # Aorta measurements
+                    elif module == 'aorta':
+                        if 'aorta_ascending_diameter_mm' in module_results:
+                            measurements_data['aorta_ascending_diameter_mm'] = round(module_results['aorta_ascending_diameter_mm'], 1)
+                        if 'aorta_descending_diameter_mm' in module_results:
+                            measurements_data['aorta_descending_diameter_mm'] = round(module_results['aorta_descending_diameter_mm'], 1)
+                    
+                    # T12L1 measurements
+                    elif module == 't12l1':
+                        if 'area_t12' in module_results:
+                            measurements_data['t12_area_cm2'] = round(module_results['area_t12'], 2)
+                        if 'area_l1' in module_results:
+                            measurements_data['l1_area_cm2'] = round(module_results['area_l1'], 2)
+                    
+                    # LAA measurements
+                    elif module == 'laa':
+                        if 'emphysema_prob' in module_results:
+                            measurements_data['laa_emphysema_probability'] = round(module_results['emphysema_prob'], 4)
+                        if 'desc' in module_results:
+                            measurements_data['laa_emphysema_classification'] = module_results['desc']
+                        if 'area' in module_results:
+                            measurements_data['laa_emphysema_area_cm2'] = round(module_results['area'], 2)
+                    
+                    # TB measurements
+                    elif module == 'tb':
+                        if 'probability' in module_results:
+                            measurements_data['tb_probability'] = round(module_results['probability'], 4)
+                        if 'prediction' in module_results:
+                            measurements_data['tb_classification'] = 'Positive' if module_results['prediction'] else 'Negative'
+                    
+                    # CTR (Cardiothoracic Ratio) results
+                    elif module == 'ctr':
+                        if 'cardiothoracic_ratio' in module_results:
+                            measurements_data['cardiothoracic_ratio'] = round(module_results['cardiothoracic_ratio'], 3)
+                        if 'mhtd_mm' in module_results:
+                            measurements_data['mhtd_mm'] = round(module_results['mhtd_mm'], 2)
+                        if 'mhcd_mm' in module_results:
+                            measurements_data['mhcd_mm'] = round(module_results['mhcd_mm'], 2)
+                    
+                    # Peripheral lung measurements
+                    elif module == 'peripheral':
+                        if 'peripheral_total_area_cm2' in module_results:
+                            measurements_data['peripheral_total_area_cm2'] = round(module_results['peripheral_total_area_cm2'], 2)
+                        if 'peripheral_central_area_cm2' in module_results:
+                            measurements_data['peripheral_central_area_cm2'] = round(module_results['peripheral_central_area_cm2'], 2)
+                        if 'peripheral_mid_area_cm2' in module_results:
+                            measurements_data['peripheral_mid_area_cm2'] = round(module_results['peripheral_mid_area_cm2'], 2)
+                        if 'peripheral_outer_area_cm2' in module_results:
+                            measurements_data['peripheral_outer_area_cm2'] = round(module_results['peripheral_outer_area_cm2'], 2) 
+                    
+                    # Diameter measurements
+                    elif module == 'diameter':
+                        if 'aorta_ascending_diameter_mm' in module_results:
+                            measurements_data['aorta_ascending_diameter_mm'] = round(module_results['aorta_ascending_diameter_mm'], 1)
+                        if 'aorta_descending_diameter_mm' in module_results:
+                            measurements_data['aorta_descending_diameter_mm'] = round(module_results['aorta_descending_diameter_mm'], 1)   
+            
+            # Debug: print all measurements before CSV creation
+            print(f"\nDEBUG: Final measurements being saved to CSV:")
+            for key, value in sorted(measurements_data.items()):
+                print(f"  {key}: {value}")
+        
+            # Create comprehensive CSV
+            dicom_filename = os.path.basename(input_file)
+            csv_path, _ = create_comprehensive_csv(
+                args.output_dir, dicom_filename, measurements_data
+            )
+            
+            print(f"All measurements collected in: {csv_path}")
+        elif args.collect_measurements and args.no_calculations:
+            print("CSV collection skipped due to --no_calculations flag")
+        
+        print(f"\nProcessing complete for {os.path.basename(input_file)}! Generated {len([m for m in all_results.values() if 'error' not in m])} masks"
+              f"{' with measurements' if args.collect_measurements and not args.no_calculations else ''}")
+    
+    # Final summary for all files
+    if len(input_files) > 1:
+        print(f"\n{'#'*80}")
+        print(f"BATCH PROCESSING COMPLETE")
+        print(f"{'#'*80}")
+        print(f"Processed {len(input_files)} files")
+        print(f"Output directory: {args.output_dir}")
 
 
 if __name__ == '__main__':
