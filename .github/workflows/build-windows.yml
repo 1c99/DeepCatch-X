@@ -1,4 +1,4 @@
-name: Build Windows Executable
+name: Build Windows Executables
 
 on:
   push:
@@ -24,22 +24,26 @@ jobs:
         pip install -r requirements-windows.txt
         pip install nuitka
     
-    - name: Fix Python path for imports
+    - name: Build inference.exe
       run: |
-        echo "import sys; sys.path.append('core')" > path_fix.py
-        type path_fix.py inference.py > inference_fixed.py
+        echo Building inference.exe...
+        python -m nuitka --standalone --assume-yes-for-downloads --output-dir=dist-inference --follow-imports inference.py
     
-    - name: Build inference.exe with Nuitka
+    - name: Build inference_ray.exe
       run: |
-        python -m nuitka --standalone --assume-yes-for-downloads --output-dir=dist --follow-imports inference_fixed.py
+        echo Building inference_ray.exe...
+        python -m nuitka --standalone --assume-yes-for-downloads --output-dir=dist-inference-ray --follow-imports inference_ray.py
     
-    - name: Test executable exists
+    - name: Create distribution folder
       run: |
-        dir dist\
-        echo "Build completed successfully!"
+        mkdir dcx-windows
+        xcopy dist-inference\inference.dist dcx-windows\inference\ /E /I
+        xcopy dist-inference-ray\inference_ray.dist dcx-windows\inference_ray\ /E /I
+        echo DCX Windows Build > dcx-windows\README.txt
+        dir dcx-windows
     
-    - name: Upload Windows executable
+    - name: Upload Windows executables
       uses: actions/upload-artifact@v4
       with:
-        name: dcx-windows-exe
-        path: dist/inference_fixed.dist/*
+        name: dcx-windows-executables
+        path: dcx-windows/**
