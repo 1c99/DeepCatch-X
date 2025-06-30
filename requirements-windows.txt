@@ -1,0 +1,15 @@
+# Windows-compatible requirements for DCX
+torch>=1.9.0
+torchvision>=0.10.0
+numpy>=1.19.0,<1.24.0
+scipy>=1.5.0
+Pillow>=8.0.0
+opencv-python>=4.5.0
+scikit-image>=0.18.0
+pydicom>=2.0.0
+nibabel>=3.0.0
+PyYAML>=5.4.1
+tqdm>=4.62.0
+pandas>=1.3.0
+# Ray might cause issues on Windows CI, so it's optional
+# ray[default]>=2.0.0
