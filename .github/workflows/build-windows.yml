@@ -6,7 +6,7 @@ on:
   workflow_dispatch:  # Allows manual trigger from GitHub website
 
 jobs:
-  build-windows:
+  build-inference:
     runs-on: windows-latest
     
     steps:
@@ -29,20 +29,67 @@ jobs:
         echo Building inference.exe...
         python -m nuitka --standalone --assume-yes-for-downloads --output-dir=dist-inference --follow-imports inference.py
     
-    - name: Build inference_ray.exe
+    - name: Upload inference.exe artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: inference-windows
+        path: dist-inference/inference.dist/
+
+  build-inference-ray:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-windows.txt
+        pip install nuitka
+    
+    - name: Build inference_ray.exe with optimizations
       run: |
         echo Building inference_ray.exe...
-        python -m nuitka --standalone --assume-yes-for-downloads --output-dir=dist-inference-ray --follow-imports inference_ray.py
+        python -m nuitka --standalone --assume-yes-for-downloads --jobs=4 --output-dir=dist-inference-ray --follow-imports inference_ray.py
     
-    - name: Create distribution folder
+    - name: Upload inference_ray.exe artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: inference-ray-windows
+        path: dist-inference-ray/inference_ray.dist/
+
+  combine-artifacts:
+    needs: [build-inference, build-inference-ray]
+    runs-on: windows-latest
+    
+    steps:
+    - name: Download inference artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: inference-windows
+        path: ./inference
+    
+    - name: Download inference_ray artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: inference-ray-windows
+        path: ./inference_ray
+    
+    - name: Create combined distribution
       run: |
         mkdir dcx-windows
-        xcopy dist-inference\inference.dist dcx-windows\inference\ /E /I
-        xcopy dist-inference-ray\inference_ray.dist dcx-windows\inference_ray\ /E /I
+        xcopy inference dcx-windows\inference\ /E /I
+        xcopy inference_ray dcx-windows\inference_ray\ /E /I
         echo DCX Windows Build > dcx-windows\README.txt
         dir dcx-windows
     
-    - name: Upload Windows executables
+    - name: Upload combined Windows executables
       uses: actions/upload-artifact@v4
       with:
         name: dcx-windows-executables
