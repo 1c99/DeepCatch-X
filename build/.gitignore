@@ -1,0 +1,16 @@
+# Build artifacts
+*.build/
+*.dist/
+*.onefile-build/
+
+# Nuitka cache
+__pycache__/
+*.pyc
+
+# Output directories
+dist/
+output/
+
+# Temporary files
+*.tmp
+*.log

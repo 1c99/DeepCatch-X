@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  dcx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dcx:latest
+    volumes:
+      - ./input:/data
+      - ./output:/results
+    environment:
+      - OMP_NUM_THREADS=4
+      - RAY_NUM_CPUS=4
+    command: >
+      --input /data
+      --output_dir /results
+      --all_modules
+      --collect_measurements
+      --num_workers 4

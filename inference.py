@@ -2596,8 +2596,8 @@ def process_diameter_module(input_file, output_dir, input_basename, all_results)
         if not diameter_file_dict[input_basename]:
             raise Exception("No aorta mask files found for diameter calculation")
         
-        # Create output directory for diameter results
-        diameter_output_dir = os.path.join(output_dir, 'diameter_results')
+        # Create output directory for diameter results with unique subfolder for each file
+        diameter_output_dir = os.path.join(output_dir, 'diameter_results', input_basename)
         os.makedirs(diameter_output_dir, exist_ok=True)
         
         # Run diameter calculation
@@ -2724,6 +2724,9 @@ def main():
     else:
         print(f"Error: Input path does not exist: {args.input_path}")
         return
+    
+    # Collect all measurements across all files
+    all_files_measurements = []
     
     # Process each input file
     for file_idx, input_file in enumerate(input_files):
@@ -2873,7 +2876,6 @@ def main():
         # Collect measurements into CSV if requested
         if args.collect_measurements and not args.no_calculations:
             print("\nCollecting measurements into CSV...")
-            from src.utils.measurement_collector import create_comprehensive_csv
             
             # Extract measurements from all module results
             measurements_data = {}
@@ -2989,18 +2991,51 @@ def main():
             for key, value in sorted(measurements_data.items()):
                 print(f"  {key}: {value}")
         
-            # Create comprehensive CSV
-            dicom_filename = os.path.basename(input_file)
-            csv_path, _ = create_comprehensive_csv(
-                args.output_dir, dicom_filename, measurements_data
-            )
-            
-            print(f"All measurements collected in: {csv_path}")
+            # Add measurements to the collection
+            all_files_measurements.append(measurements_data)
         elif args.collect_measurements and args.no_calculations:
             print("CSV collection skipped due to --no_calculations flag")
         
         print(f"\nProcessing complete for {os.path.basename(input_file)}! Generated {len([m for m in all_results.values() if 'error' not in m])} masks"
               f"{' with measurements' if args.collect_measurements and not args.no_calculations else ''}")
+    
+    # Create single CSV with all measurements after all files are processed
+    if args.collect_measurements and all_files_measurements:
+        print(f"\n{'#'*80}")
+        print("Creating comprehensive CSV with all measurements...")
+        
+        import csv
+        from collections import OrderedDict
+        
+        # Determine all unique columns across all files
+        all_columns = OrderedDict()
+        # Always include these columns first
+        for col in ['patient_id', 'dicom_file', 'processing_date']:
+            all_columns[col] = True
+        
+        # Collect all unique columns from all measurements
+        for measurements in all_files_measurements:
+            for key in measurements.keys():
+                all_columns[key] = True
+        
+        # Create CSV filename with timestamp
+        csv_filename = f"dcx_measurements_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        csv_path = os.path.join(args.output_dir, csv_filename)
+        
+        # Write CSV file
+        with open(csv_path, 'w', newline='') as csvfile:
+            fieldnames = list(all_columns.keys())
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            writer.writeheader()
+            for measurements in all_files_measurements:
+                # Fill in empty values for missing columns
+                row = {col: measurements.get(col, '') for col in fieldnames}
+                writer.writerow(row)
+        
+        print(f"All measurements saved to: {csv_path}")
+        print(f"Total rows: {len(all_files_measurements)}")
+        print(f"{'#'*80}")
     
     # Final summary for all files
     if len(input_files) > 1:
