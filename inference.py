@@ -3,6 +3,10 @@
 Unified DCX Medical Imaging Inference System
 Supports 4 groups of modules with exact original functionality
 """
+# Configure matplotlib to use non-GUI backend before importing
+import matplotlib
+matplotlib.use('Agg')
+
 import os
 import sys
 import numpy as np
