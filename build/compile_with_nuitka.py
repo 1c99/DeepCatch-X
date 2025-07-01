@@ -81,8 +81,8 @@ def compile_inference(script_name, output_name=None):
     for package in packages_to_include:
         cmd.append(f"--include-package={package}")
     
-    # Handle cv2 (opencv-python) separately - include as module not package
-    cmd.append("--include-module=cv2")
+    # Handle cv2 (opencv-python) - let Nuitka auto-detect it
+    # cv2 will be included automatically when imported
     
     # Include data directories
     data_dirs = [
