@@ -31,9 +31,9 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install nuitka zstandard ordered-set
-        pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-        pip install nibabel pydicom opencv-python pillow scipy scikit-image scikit-learn
-        pip install numpy pandas matplotlib pyyaml argparse
+        # Install PyTorch with CUDA support for Windows builds
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+        pip install -r requirements-windows.txt
     
     - name: Download model checkpoints (if needed)
       run: |
@@ -43,18 +43,11 @@ jobs:
     
     - name: Fix Python path for imports
       run: |
-        $content = @"
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'core'))
-"@
-        $content | Out-File -FilePath "path_fix.py" -Encoding utf8
-        
-        # Combine path fix with inference.py
-        $pathFix = Get-Content "path_fix.py" -Raw
-        $inference = Get-Content "inference.py" -Raw
-        $combined = $pathFix + "`n" + $inference
-        $combined | Out-File -FilePath "inference_fixed.py" -Encoding utf8
+        echo "import sys" > path_fix.py
+        echo "import os" >> path_fix.py
+        echo "sys.path.append(os.path.join(os.path.dirname(__file__), 'core'))" >> path_fix.py
+        echo "" >> path_fix.py
+        type path_fix.py inference.py > inference_fixed.py
     
     - name: Build inference.exe with Nuitka
       run: |
@@ -81,19 +74,16 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'core'))
         Copy-Item "README.md" "dcx-windows\" -Force
         
         # Create a simple batch file for easy execution
-        $batchContent = @"
-@echo off
-echo DCX Medical Imaging Inference - Windows Build
-echo.
-echo Usage: inference_fixed.exe --module [module] --input_path [input] --output_dir [output]
-echo.
-echo Available modules: lung, heart, airway, bone, covid, vessel, aorta, diameter, ctr, peripheral
-echo.
-echo Example: inference_fixed.exe --module lung --input_path input.dcm --output_dir results
-echo.
-pause
-"@
-        $batchContent | Out-File -FilePath "dcx-windows\run_dcx.bat" -Encoding ascii
+        echo "@echo off" > dcx-windows\run_dcx.bat
+        echo "echo DCX Medical Imaging Inference - Windows Build" >> dcx-windows\run_dcx.bat
+        echo "echo." >> dcx-windows\run_dcx.bat
+        echo "echo Usage: inference_fixed.exe --module [module] --input_path [input] --output_dir [output]" >> dcx-windows\run_dcx.bat
+        echo "echo." >> dcx-windows\run_dcx.bat
+        echo "echo Available modules: lung, heart, airway, bone, covid, vessel, aorta, diameter, ctr, peripheral" >> dcx-windows\run_dcx.bat
+        echo "echo." >> dcx-windows\run_dcx.bat
+        echo "echo Example: inference_fixed.exe --module lung --input_path input.dcm --output_dir results" >> dcx-windows\run_dcx.bat
+        echo "echo." >> dcx-windows\run_dcx.bat
+        echo "pause" >> dcx-windows\run_dcx.bat
     
     - name: Upload Windows executable
       uses: actions/upload-artifact@v4

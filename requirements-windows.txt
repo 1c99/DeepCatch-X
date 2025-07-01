@@ -1,7 +1,8 @@
 # Core dependencies for DCX Windows build
-# PyTorch (CPU version for better compatibility)
-torch==2.3.0
-torchvision==0.18.0
+# PyTorch with CUDA support for Windows (most medical imaging workstations have NVIDIA GPUs)
+torch==2.3.0+cu121
+torchvision==0.18.0+cu121
+torchaudio==2.3.0+cu121
 
 # Medical imaging libraries
 nibabel==5.2.1
@@ -28,6 +29,7 @@ matplotlib==3.8.4
 PyYAML==6.0.1
 
 # Build dependencies for Nuitka
-nuitka>=2.7.0
-ordered-set>=4.1.0
-zstandard>=0.23.0
+# Note: These are installed separately in the workflow to avoid conflicts
+# nuitka>=2.7.0
+# ordered-set>=4.1.0  
+# zstandard>=0.23.0
