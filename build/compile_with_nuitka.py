@@ -26,7 +26,9 @@ def get_platform_info():
     """Get current platform information"""
     system = platform.system()
     machine = platform.machine()
+    cpu_count = os.cpu_count()
     print(f"\n📦 Building for: {system} {machine}")
+    print(f"🚀 CPU cores available: {cpu_count} (Nuitka will use all cores)")
     return system, machine
 
 def compile_inference(script_name, output_name=None):
@@ -43,6 +45,7 @@ def compile_inference(script_name, output_name=None):
         "--assume-yes-for-downloads",
         "--show-progress",
         "--show-memory",
+        "--jobs=auto",      # Use all available CPU cores for faster compilation
         "--enable-plugin=numpy",
         "--enable-plugin=torch",
         "--remove-output",  # Remove build folder after compilation
