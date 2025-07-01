@@ -70,12 +70,19 @@ def compile_inference(script_name, output_name=None):
     # Add required packages and modules
     packages_to_include = [
         "torch", "torchvision", "numpy", "scipy", "PIL", 
-        "pydicom", "nibabel", "yaml", "cv2", "skimage",
-        "ray", "pandas"  # ray only needed for inference_ray.py
+        "pydicom", "nibabel", "yaml", "skimage",
+        "pandas"  # Common packages
     ]
+    
+    # Only include ray for inference_ray.py
+    if "ray" in script_name:
+        packages_to_include.append("ray")
     
     for package in packages_to_include:
         cmd.append(f"--include-package={package}")
+    
+    # Handle cv2 (opencv-python) separately - include as module not package
+    cmd.append("--include-module=cv2")
     
     # Include data directories
     data_dirs = [
