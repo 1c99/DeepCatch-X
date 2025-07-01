@@ -38,6 +38,9 @@ def compile_inference(script_name, output_name=None):
     
     system, machine = get_platform_info()
     
+    # Get CPU count for parallel compilation
+    cpu_count = os.cpu_count() or 1
+    
     # Base Nuitka command
     cmd = [
         sys.executable, "-m", "nuitka",
@@ -45,7 +48,7 @@ def compile_inference(script_name, output_name=None):
         "--assume-yes-for-downloads",
         "--show-progress",
         "--show-memory",
-        "--jobs=auto",      # Use all available CPU cores for faster compilation
+        f"--jobs={cpu_count}",  # Use all available CPU cores for faster compilation
         "--enable-plugin=numpy",
         "--enable-plugin=torch",
         "--remove-output",  # Remove build folder after compilation
