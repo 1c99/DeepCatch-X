@@ -47,13 +47,22 @@ def compile_inference(script_name, output_name=None):
         "--standalone",
         "--assume-yes-for-downloads",
         "--show-progress",
-        "--show-memory",
         f"--jobs={cpu_count}",  # Use all available CPU cores for faster compilation
         "--enable-plugin=numpy",
         "--enable-plugin=torch",
+        "--enable-plugin=anti-bloat",  # Helps reduce unnecessary imports
+        "--nofollow-import-to=matplotlib.backends",  # Skip matplotlib GUI backends
         "--remove-output",  # Remove build folder after compilation
-        "--low-memory",     # Use less memory during compilation
     ]
+    
+    # Platform-specific memory options
+    if system == "Windows":
+        cmd.append("--low-memory")  # Use less memory during compilation
+    elif system == "Linux":
+        # Skip memory tracking on Linux to avoid yaml assertion error
+        pass
+    else:  # macOS
+        cmd.append("--show-memory")
     
     # Platform-specific options
     if system == "Darwin":  # macOS
@@ -70,9 +79,13 @@ def compile_inference(script_name, output_name=None):
     # Add required packages and modules
     packages_to_include = [
         "torch", "torchvision", "numpy", "scipy", "PIL", 
-        "pydicom", "nibabel", "yaml", "skimage",
+        "pydicom", "nibabel", "skimage",
         "pandas"  # Common packages
     ]
+    
+    # Add yaml carefully to avoid assertion errors
+    if system != "Linux":
+        packages_to_include.append("yaml")
     
     # Only include ray for inference_ray.py
     if "ray" in script_name:
