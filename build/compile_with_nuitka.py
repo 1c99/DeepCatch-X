@@ -62,8 +62,10 @@ def compile_inference(script_name, output_name=None):
     elif system == "Windows":
         cmd.extend([
             "--windows-disable-console",
-            "--windows-icon-from-ico=icon.ico"  # if you have an icon
         ])
+        # Only add icon if it exists
+        if os.path.exists("icon.ico"):
+            cmd.append("--windows-icon-from-ico=icon.ico")
     
     # Add required packages and modules
     packages_to_include = [
