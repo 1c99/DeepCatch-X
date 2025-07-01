@@ -49,7 +49,7 @@ jobs:
         echo "import os" >> path_fix.py
         echo "sys.path.append(os.path.join(os.path.dirname(__file__), 'core'))" >> path_fix.py
         echo "" >> path_fix.py
-        type path_fix.py inference.py > inference_fixed.py
+        Get-Content path_fix.py, inference.py | Out-File -FilePath inference_fixed.py -Encoding utf8
     
     - name: Build inference.exe with Nuitka
       run: |
