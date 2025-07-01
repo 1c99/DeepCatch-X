@@ -734,14 +734,46 @@ class UnifiedDCXInference:
                 combined_output = np.max(output_full, axis=1, keepdims=True)  # Max across channel dimension
                 self._save_output(combined_output, output_path, pixel_spacing, ratio)
                 
-                # Only save individual channels if not creating temp files
-                # Check if output path contains 'temp' to identify temporary files
-                if 'temp' not in os.path.basename(output_path):
-                    # Also save individual channels
-                    self._save_multi_channel_output(output_full, output_path, pixel_spacing, ratio)
+                # Always save individual channels for multi-channel outputs
+                # The _save_multi_channel_output will handle temp file creation correctly
+                self._save_multi_channel_output(output_full, output_path, pixel_spacing, ratio)
             else:
                 # Regular single-channel output
                 self._save_output(output_full, output_path, pixel_spacing, ratio)
+                
+                # When in batch mode (--all_modules), create temp files for CTR/peripheral modules
+                if hasattr(self, 'batch_mode') and self.batch_mode and self.module_name in ['lung', 'heart']:
+                    output_dir = os.path.dirname(output_path)
+                    base_name = os.path.splitext(os.path.basename(output_path))[0]
+                    # Remove module suffix to get original filename
+                    if base_name.endswith(f'_{self.module_name}'):
+                        original_name = base_name[:-len(f'_{self.module_name}')]
+                    else:
+                        original_name = base_name
+                    
+                    # Determine temp size based on module
+                    if self.module_name == 'lung':
+                        temp_size = 2048
+                        temp_path = os.path.join(output_dir, f"{original_name}_lung_temp2048.nii")
+                        print(f"📦 Creating lung_temp2048.nii for CTR/peripheral modules...")
+                    else:  # heart
+                        temp_size = 512
+                        temp_path = os.path.join(output_dir, f"{original_name}_heart_temp512.nii")
+                        print(f"📦 Creating heart_temp512.nii for CTR module...")
+                    
+                    # Resize to temp size if needed
+                    temp_output = output_full
+                    if temp_output[0, 0].shape[0] != temp_size:
+                        temp_output = self._resize_output_to_size(temp_output, temp_size)
+                    
+                    # Always save temp files as NIfTI
+                    original_format = self.output_format
+                    original_size = self.output_size
+                    self.output_format = 'nii'
+                    self.output_size = str(temp_size)
+                    self._save_output(temp_output, temp_path, pixel_spacing, ratio)
+                    self.output_format = original_format
+                    self.output_size = original_size
         
         # Calculate metrics
         area = volume = None
@@ -1664,6 +1696,27 @@ class UnifiedDCXInference:
             # Use standard save method to support all formats
             self._save_output(channel_output, channel_path, pixel_spacing, ratio)
             print(f"Channel {i} ({channel_name}) saved to: {channel_path}")
+            
+            # When in batch mode (--all_modules), also save temp2048 files for diameter module
+            if hasattr(self, 'batch_mode') and self.batch_mode and not is_temp2048:
+                temp_path = os.path.join(output_dir, f"{original_name}_{channel_name}_temp2048.nii")
+                print(f"📦 Creating {channel_name}_temp2048.nii for diameter module...")
+                
+                # Get the data at model resolution (before any output resizing)
+                temp_channel_output = output_full[:, i:i+1, :, :]
+                
+                # Resize to 2048 if needed
+                if temp_channel_output[0, 0].shape[0] != 2048:
+                    temp_channel_output = self._resize_output_to_size(temp_channel_output, 2048)
+                
+                # Always save temp files as NIfTI at 2048x2048 (diameter module expects this)
+                original_format = self.output_format
+                original_size = self.output_size
+                self.output_format = 'nii'
+                self.output_size = '2048'  # Force 2048 size for temp files
+                self._save_output(temp_channel_output, temp_path, pixel_spacing, ratio)
+                self.output_format = original_format
+                self.output_size = original_size
 
     def _process_dual_segmentation_with_regression(self, dicom_path, output_path):
         """Process dual segmentation with regression (T12L1 + bone density)"""
@@ -2255,16 +2308,28 @@ def process_ctr_module(input_file, output_dir, input_basename, all_results):
         # Create temporary files if needed
         temp_files = []
         
-        # Check for existing files or create temp ones
+        # Check for temp files first, then existing files, or create temp ones
+        lung_temp_path = os.path.join(output_dir, f"{input_basename}_lung_temp2048.nii")
         lung_2048_path = os.path.join(output_dir, f"{input_basename}_lung.nii")
-        if not os.path.exists(lung_2048_path):
-            # Always create temp file for CTR
+        
+        if os.path.exists(lung_temp_path):
+            # Use existing temp file
+            lung_2048_path = lung_temp_path
+            print(f"Using existing lung_temp2048.nii")
+        elif not os.path.exists(lung_2048_path):
+            # Create temp file for CTR
             lung_2048_path = create_temp_file_if_needed(input_file, output_dir, input_basename, 'lung', 2048)
             temp_files.append(lung_2048_path)
         
+        heart_temp_path = os.path.join(output_dir, f"{input_basename}_heart_temp512.nii")
         heart_512_path = os.path.join(output_dir, f"{input_basename}_heart.nii")
-        if not os.path.exists(heart_512_path):
-            # Always create temp file for CTR
+        
+        if os.path.exists(heart_temp_path):
+            # Use existing temp file
+            heart_512_path = heart_temp_path
+            print(f"Using existing heart_temp512.nii")
+        elif not os.path.exists(heart_512_path):
+            # Create temp file for CTR
             heart_512_path = create_temp_file_if_needed(input_file, output_dir, input_basename, 'heart', 512)
             temp_files.append(heart_512_path)
         
@@ -2406,10 +2471,16 @@ def process_peripheral_module(input_file, output_dir, input_basename, output_for
         # Create temporary file if needed
         temp_files = []
         
-        # Check for existing file or create temp one
+        # Check for temp file first, then existing file, or create temp one
+        lung_temp_path = os.path.join(output_dir, f"{input_basename}_lung_temp2048.nii")
         lung_2048_path = os.path.join(output_dir, f"{input_basename}_lung.nii")
-        if not os.path.exists(lung_2048_path):
-            # Always create temp file for peripheral
+        
+        if os.path.exists(lung_temp_path):
+            # Use existing temp file
+            lung_2048_path = lung_temp_path
+            print(f"Using existing lung_temp2048.nii")
+        elif not os.path.exists(lung_2048_path):
+            # Create temp file for peripheral
             lung_2048_path = create_temp_file_if_needed(input_file, output_dir, input_basename, 'lung', 2048)
             temp_files.append(lung_2048_path)
         
@@ -2537,15 +2608,42 @@ def process_diameter_module(input_file, output_dir, input_basename, all_results)
         # Create temporary files if needed
         temp_files = []
         
-        # Check for existing aorta files
-        asc_file = os.path.join(output_dir, f"{input_basename}_aorta_asc.nii")
-        desc_file = os.path.join(output_dir, f"{input_basename}_aorta_desc.nii")
+        # Check for temp2048 files first (preferred for diameter calculation)
+        asc_file = os.path.join(output_dir, f"{input_basename}_aorta_asc_temp2048.nii")
+        desc_file = os.path.join(output_dir, f"{input_basename}_aorta_desc_temp2048.nii")
         
-        # If files don't exist, we need to run aorta segmentation first
+        print(f"  Looking for asc_file: {asc_file}")
+        print(f"  Exists: {os.path.exists(asc_file)}")
+        print(f"  Looking for desc_file: {desc_file}")
+        print(f"  Exists: {os.path.exists(desc_file)}")
+        
+        # Add temp files to cleanup list if they exist
+        if os.path.exists(asc_file):
+            temp_files.append(asc_file)
+        if os.path.exists(desc_file):
+            temp_files.append(desc_file)
+            
+        # Also add the combined aorta temp file
+        combined_temp = os.path.join(output_dir, f"{input_basename}_aorta_temp2048.nii")
+        if os.path.exists(combined_temp):
+            temp_files.append(combined_temp)
+            
+        # Also track regular aorta files for cleanup
+        regular_asc = os.path.join(output_dir, f"{input_basename}_aorta_asc.nii")
+        regular_desc = os.path.join(output_dir, f"{input_basename}_aorta_desc.nii")
+        regular_aorta = os.path.join(output_dir, f"{input_basename}_aorta.nii")
+        
+        # If temp files don't exist, try regular NII files
+        if not os.path.exists(asc_file):
+            asc_file = os.path.join(output_dir, f"{input_basename}_aorta_asc.nii")
+        if not os.path.exists(desc_file):
+            desc_file = os.path.join(output_dir, f"{input_basename}_aorta_desc.nii")
+        
+        # If files still don't exist, we need to run aorta segmentation first
         if not os.path.exists(asc_file) or not os.path.exists(desc_file):
             print("  Creating aorta segmentation for diameter calculation...")
             
-            # Determine device to use
+            # Use UnifiedDCXInference directly to create aorta segmentation
             import torch
             if torch.cuda.is_available():
                 device = 'cuda'
@@ -2554,31 +2652,60 @@ def process_diameter_module(input_file, output_dir, input_basename, all_results)
             else:
                 device = 'cpu'
             
-            # Simply run the inference command to generate aorta files
-            import subprocess
-            cmd = [
-                'python', __file__,
-                '--module', 'aorta',
-                '--input_file', input_file,
-                '--output_dir', output_dir,
-                '--output_format', 'nii',
-                '--output_size', '2048'
-            ]
-            subprocess.run(cmd, capture_output=True)
+            # Create aorta segmentation using UnifiedDCXInference
+            config_path = os.path.join(os.path.dirname(__file__), 'configs', 'aorta.yaml')
+            inference = UnifiedDCXInference(config_path, device, 'nii', '2048', 'aorta')
+            
+            # Set batch_mode to trigger temp2048 file creation
+            inference.batch_mode = True
+            
+            # # Generate the aorta output path with temp2048 suffix to only create temp files
+            # # This will trigger the temp file creation logic in _save_multi_channel_output
+            aorta_output_path = os.path.join(output_dir, f"{input_basename}_aorta_temp2048.nii")
+            
+            # Process to create the aorta files
+            try:
+                results = inference.process(input_file, aorta_output_path)
+            except Exception as e:
+                print(f"  Error creating aorta segmentation: {str(e)}")
+                raise Exception("Failed to create aorta segmentation")
             
             # The aorta module should have created the asc and desc files
-            # Add them to temp files for cleanup
-            if os.path.exists(asc_file):
+            # Add them to temp files for cleanup if not already added
+            if os.path.exists(asc_file) and asc_file not in temp_files:
                 temp_files.append(asc_file)
-            if os.path.exists(desc_file):
+            if os.path.exists(desc_file) and desc_file not in temp_files:
                 temp_files.append(desc_file)
             
-            # Add the combined aorta file to temp files for cleanup
-            combined_file = os.path.join(output_dir, f"{input_basename}_aorta.nii")
-            if os.path.exists(combined_file):
-                temp_files.append(combined_file)
+            # The temp2048 files should already be in the cleanup list
+            
+            # Reset file paths to temp files after creation
+            asc_file = os.path.join(output_dir, f"{input_basename}_aorta_asc_temp2048.nii")
+            desc_file = os.path.join(output_dir, f"{input_basename}_aorta_desc_temp2048.nii")
+            
+            # Add all created temp files to cleanup list
+            if os.path.exists(combined_temp) and combined_temp not in temp_files:
+                temp_files.append(combined_temp)
+            
+        # Debug: List files in output directory
+        print(f"  Files in output directory after creation:")
+        for f in os.listdir(output_dir):
+            if 'aorta' in f:
+                print(f"    {f}")
         
-        if not os.path.exists(asc_file) and not os.path.exists(desc_file):
+        # Re-check for the files
+        print(f"  Re-checking for files:")
+        print(f"    asc_file path: {asc_file}")
+        print(f"    asc_file exists: {os.path.exists(asc_file)}")
+        print(f"    desc_file path: {desc_file}")
+        print(f"    desc_file exists: {os.path.exists(desc_file)}")
+        
+        # Check absolute paths
+        print(f"  Absolute paths:")
+        print(f"    output_dir: {os.path.abspath(output_dir)}")
+        print(f"    asc_file: {os.path.abspath(asc_file)}")
+        
+        if not os.path.exists(asc_file) or not os.path.exists(desc_file):
             raise Exception("Diameter calculation requires aorta masks. Failed to create aorta segmentation.")
         
         # Import the diameter calculation function
@@ -2624,14 +2751,35 @@ def process_diameter_module(input_file, output_dir, input_basename, all_results)
                 print(f"Descending aorta diameter: {max_diameters[1]:.1f} mm")
         
         # Clean up temporary files and diameter_results folder
-        for temp_file in temp_files:
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-        
         # Clean up diameter_results folder
         if 'diameter_output_dir' in locals() and os.path.exists(diameter_output_dir):
             import shutil
             shutil.rmtree(diameter_output_dir)
+            print(f"  ✓ Removed diameter_results subdirectory")
+            
+            # Also remove parent diameter_results directory if empty
+            parent_dir = os.path.dirname(diameter_output_dir)
+            if os.path.exists(parent_dir) and not os.listdir(parent_dir):
+                os.rmdir(parent_dir)
+                print(f"  ✓ Removed empty diameter_results directory")
+                m
+        # Clean up temp files after successful calculation
+        # Ensure temp asc/desc files are in the cleanup list before deleting
+        asc_temp = os.path.join(output_dir, f"{input_basename}_aorta_asc_temp2048.nii")
+        desc_temp = os.path.join(output_dir, f"{input_basename}_aorta_desc_temp2048.nii")
+        if os.path.exists(asc_temp) and asc_temp not in temp_files:
+            temp_files.append(asc_temp)
+        if os.path.exists(desc_temp) and desc_temp not in temp_files:
+            temp_files.append(desc_temp)
+
+
+        # Clean up temp files after successful calculation
+        print(f"\n🧹 Cleaning up {len(temp_files)} temporary files...")
+        print(f"  Temp files list: {[os.path.basename(f) for f in temp_files]}")
+        for temp_file in temp_files:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+                print(f"  ✓ Removed temp file: {os.path.basename(temp_file)}")
                 
     except Exception as e:
         print(f"✗ Diameter calculation failed: {str(e)}")
@@ -2645,6 +2793,11 @@ def process_diameter_module(input_file, output_dir, input_basename, all_results)
         if 'diameter_output_dir' in locals() and os.path.exists(diameter_output_dir):
             import shutil
             shutil.rmtree(diameter_output_dir)
+            
+            # Also remove parent diameter_results directory if empty
+            parent_dir = os.path.dirname(diameter_output_dir)
+            if os.path.exists(parent_dir) and not os.listdir(parent_dir):
+                os.rmdir(parent_dir)
 
 
 def main():
@@ -2657,7 +2810,7 @@ def main():
                        help='Module to use for inference (required unless --all_modules is used)')
     parser.add_argument('--all_modules', action='store_true',
                        help='Run all segmentation modules in a single execution')
-    parser.add_argument('--input_path', type=str, required=True,
+    parser.add_argument('--input_path', '--input_dir', type=str, required=True,
                        help='Path to input DICOM file or directory containing DICOM files')
     parser.add_argument('--output_dir', type=str, required=True,
                        help='Path to output directory')
@@ -3036,6 +3189,30 @@ def main():
         print(f"All measurements saved to: {csv_path}")
         print(f"Total rows: {len(all_files_measurements)}")
         print(f"{'#'*80}")
+    
+    # Clean up batch temp files if using --all_modules
+    if args.all_modules:
+        print(f"\n🧹 Cleaning up batch temporary files...")
+        
+        # Find and remove all temp files
+        temp_patterns = [
+            '*_lung_temp2048.nii',
+            '*_heart_temp512.nii',
+            '*_aorta_asc_temp2048.nii',
+            '*_aorta_desc_temp2048.nii'
+        ]
+        
+        cleanup_count = 0
+        for pattern in temp_patterns:
+            temp_files = glob.glob(os.path.join(args.output_dir, pattern))
+            for temp_file in temp_files:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                    cleanup_count += 1
+                    print(f"  ✓ Removed: {os.path.basename(temp_file)}")
+        
+        if cleanup_count > 0:
+            print(f"  Total temp files cleaned: {cleanup_count}")
     
     # Final summary for all files
     if len(input_files) > 1:

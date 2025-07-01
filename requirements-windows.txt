@@ -1,15 +1,33 @@
-# Windows-compatible requirements for DCX
-torch>=1.9.0
-torchvision>=0.10.0
-numpy>=1.19.0,<1.24.0
-scipy>=1.5.0
-Pillow>=8.0.0
-opencv-python>=4.5.0
-scikit-image>=0.18.0
-pydicom>=2.0.0
-nibabel>=3.0.0
-PyYAML>=5.4.1
-tqdm>=4.62.0
-pandas>=1.3.0
-# Ray might cause issues on Windows CI, so it's optional
-# ray[default]>=2.0.0
+# Core dependencies for DCX Windows build
+# PyTorch (CPU version for better compatibility)
+torch==2.3.0
+torchvision==0.18.0
+
+# Medical imaging libraries
+nibabel==5.2.1
+pydicom==3.0.1
+SimpleITK==2.4.1
+
+# Image processing
+opencv-python==4.9.0.80
+Pillow==10.3.0
+scikit-image==0.24.0
+
+# Scientific computing
+numpy==1.26.4
+scipy==1.13.0
+scikit-learn==1.5.1
+
+# Data handling
+pandas==2.2.2
+
+# Visualization (minimal for diameter calculations)
+matplotlib==3.8.4
+
+# Configuration and utilities
+PyYAML==6.0.1
+
+# Build dependencies for Nuitka
+nuitka>=2.7.0
+ordered-set>=4.1.0
+zstandard>=0.23.0

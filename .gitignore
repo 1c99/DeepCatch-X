@@ -17,8 +17,12 @@ __pycache__/
 # Jupyter notebooks
 .ipynb_checkpoints/
 
+# Results and output directories
+results/
+
 # OS files
-.DS_Store*.mipx
+.DS_Store
+*.mipx
 *.pth
 *.pt
 *.ckpt
