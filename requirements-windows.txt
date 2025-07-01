@@ -1,8 +1,8 @@
 # Core dependencies for DCX Windows build
-# PyTorch with CUDA support for Windows (most medical imaging workstations have NVIDIA GPUs)
-torch==2.3.0+cu121
-torchvision==0.18.0+cu121
-torchaudio==2.3.0+cu121
+# PyTorch with CUDA support for Windows (installed separately in workflow)
+# torch>=2.3.0
+# torchvision>=0.18.0
+# torchaudio>=2.3.0
 
 # Medical imaging libraries
 nibabel==5.2.1

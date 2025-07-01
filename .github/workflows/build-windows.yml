@@ -30,9 +30,11 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        # Install build tools first
         pip install nuitka zstandard ordered-set
         # Install PyTorch with CUDA support for Windows builds
         pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+        # Install remaining dependencies (PyTorch excluded from requirements file)
         pip install -r requirements-windows.txt
     
     - name: Download model checkpoints (if needed)
