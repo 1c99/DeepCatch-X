@@ -4,10 +4,10 @@ Unified DCX Medical Imaging Inference System
 Supports 4 groups of modules with exact original functionality
 """
 # Configure matplotlib to use non-GUI backend before importing
-import matplotlib
-matplotlib.use('Agg')
-
 import os
+os.environ['MPLBACKEND'] = 'Agg'  # Force Agg backend via environment
+import matplotlib
+matplotlib.use('Agg', force=True)  # Force Agg backend
 import sys
 import numpy as np
 import pydicom as dicom
@@ -3138,7 +3138,7 @@ def main():
                             measurements_data['l1_area_cm2'] = round(module_results['area_l1'], 2)
                     
                     # LAA measurements
-                    elif module == 'laa':
+                    elif module == 'laa': 
                         if 'emphysema_prob' in module_results:
                             measurements_data['laa_emphysema_probability'] = round(module_results['emphysema_prob'], 4)
                         if 'desc' in module_results:

@@ -92,7 +92,7 @@ def compile_inference(script_name, output_name=None):
         pass
     elif system == "Windows":
         cmd.extend([
-            "--windows-disable-console",
+            "--windows-console-mode=disable",  # Updated syntax for newer Nuitka
         ])
         # Only add icon if it exists
         if os.path.exists("icon.ico"):
