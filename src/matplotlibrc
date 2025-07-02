@@ -1,0 +1,2 @@
+# Force Agg backend for Nuitka builds
+backend : Agg

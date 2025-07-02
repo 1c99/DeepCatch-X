@@ -30,23 +30,22 @@ from src.utils.base_options import BaseOptions
 from src.utils.model_factory import create_model_v2 as create_model
 
 # Import insights modules for CTR, peripheral, and diameter calculations
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src', 'insights'))
-from cardiothoracic_ratio import (find_contours as ctr_find_contours, 
-                                  center_point as ctr_center_point, 
-                                  center_point_one as ctr_center_point_one, 
-                                  full_mask as ctr_full_mask, 
-                                  bitwise_mask as ctr_bitwise_mask, 
-                                  get_longest_line as ctr_get_longest_line)
-import cardiothoracic_ratio
+from src.insights.cardiothoracic_ratio import (find_contours as ctr_find_contours, 
+                                               center_point as ctr_center_point, 
+                                               center_point_one as ctr_center_point_one, 
+                                               full_mask as ctr_full_mask, 
+                                               bitwise_mask as ctr_bitwise_mask, 
+                                               get_longest_line as ctr_get_longest_line)
+from src.insights import cardiothoracic_ratio
 
-from peripheral_area import (find_contours as peripheral_find_contours, 
-                            center_point as peripheral_center_point, 
-                            center_point_one as peripheral_center_point_one, 
-                            full_mask as peripheral_full_mask, 
-                            bitwise_mask as peripheral_bitwise_mask)
-import peripheral_area
+from src.insights.peripheral_area import (find_contours as peripheral_find_contours, 
+                                         center_point as peripheral_center_point, 
+                                         center_point_one as peripheral_center_point_one, 
+                                         full_mask as peripheral_full_mask, 
+                                         bitwise_mask as peripheral_bitwise_mask)
+from src.insights import peripheral_area
 
-from aorta_diameter import compute_diameter
+from src.insights.aorta_diameter import compute_diameter
 
 # Import segmentation_models_pytorch for LAA module
 try:

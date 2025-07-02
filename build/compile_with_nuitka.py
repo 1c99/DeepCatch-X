@@ -145,6 +145,10 @@ def compile_inference(script_name, output_name=None):
         ("src", "src"),
     ]
     
+    # Include matplotlib config to force Agg backend
+    if os.path.exists("src/matplotlibrc"):
+        cmd.append("--include-data-file=src/matplotlibrc=matplotlib/mpl-data/matplotlibrc")
+    
     # Only include configs directory if not embedded
     if not embedded_configs:
         data_dirs.insert(0, ("configs", "configs"))
