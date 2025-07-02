@@ -64,6 +64,16 @@ def compile_inference(script_name, output_name=None):
         "--enable-plugin=torch",
         "--enable-plugin=anti-bloat",  # Helps reduce unnecessary imports
         "--nofollow-import-to=matplotlib.backends",  # Skip matplotlib GUI backends
+        "--nofollow-import-to=matplotlib.backends.qt_compat",
+        "--nofollow-import-to=matplotlib.backends.backend_qt",
+        "--nofollow-import-to=matplotlib.backends.backend_qt5",
+        "--nofollow-import-to=matplotlib.backends.backend_qt5agg",
+        "--nofollow-import-to=matplotlib.backends.backend_qtagg",
+        "--nofollow-import-to=PyQt5",
+        "--nofollow-import-to=PyQt6", 
+        "--nofollow-import-to=PySide2",
+        "--nofollow-import-to=PySide6",
+        "--nofollow-import-to=tkinter",
         "--remove-output",  # Remove build folder after compilation
     ]
     
