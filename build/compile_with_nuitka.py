@@ -87,6 +87,9 @@ def compile_inference(script_name, output_name=None):
     if system != "Linux":
         packages_to_include.append("yaml")
     
+    # Add segmentation_models_pytorch for LAA module
+    packages_to_include.append("segmentation_models_pytorch")
+    
     # Only include ray for inference_ray.py
     if "ray" in script_name:
         packages_to_include.append("ray")
@@ -96,6 +99,15 @@ def compile_inference(script_name, output_name=None):
     
     # Handle cv2 (opencv-python) - let Nuitka auto-detect it
     # cv2 will be included automatically when imported
+    
+    # Include specific modules from src.insights
+    insight_modules = [
+        "src.insights.cardiothoracic_ratio",
+        "src.insights.peripheral_area", 
+        "src.insights.aorta_diameter"
+    ]
+    for module in insight_modules:
+        cmd.append(f"--include-module={module}")
     
     # Include data directories
     data_dirs = [
