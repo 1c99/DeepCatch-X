@@ -2433,8 +2433,8 @@ def process_ctr_module(input_file, output_dir, input_basename, all_results):
         left_heart = heart_data[:, :int(center)]
         right_heart = heart_data[:, int(center):]
         
-        left_longest_line = get_longest_line(left_heart, center, 2048)
-        right_longest_line = get_longest_line(right_heart, 2048-center, 2048)
+        left_longest_line = ctr_get_longest_line(left_heart, center, 2048)
+        right_longest_line = ctr_get_longest_line(right_heart, 2048-center, 2048)
         
         left_length = left_longest_line[1][0] - left_longest_line[0][0]
         right_length = right_longest_line[1][0] - right_longest_line[0][0]
@@ -2783,7 +2783,6 @@ def process_diameter_module(input_file, output_dir, input_basename, all_results)
             if os.path.exists(parent_dir) and not os.listdir(parent_dir):
                 os.rmdir(parent_dir)
                 print(f"  ✓ Removed empty diameter_results directory")
-                m
         # Clean up temp files after successful calculation
         # Ensure temp asc/desc files are in the cleanup list before deleting
         asc_temp = os.path.join(output_dir, f"{input_basename}_aorta_asc_temp2048.nii")
@@ -3234,6 +3233,13 @@ def main():
         
         if cleanup_count > 0:
             print(f"  Total temp files cleaned: {cleanup_count}")
+        
+        # Also clean up diameter_results directory if it exists
+        diameter_results_dir = os.path.join(args.output_dir, 'diameter_results')
+        if os.path.exists(diameter_results_dir):
+            import shutil
+            shutil.rmtree(diameter_results_dir)
+            print(f"  ✓ Removed diameter_results directory")
     
     # Final summary for all files
     if len(input_files) > 1:
