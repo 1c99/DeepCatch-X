@@ -29,6 +29,31 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'core'))
 from src.utils.base_options import BaseOptions
 from src.utils.model_factory import create_model_v2 as create_model
 
+# Import insights modules for CTR, peripheral, and diameter calculations
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src', 'insights'))
+from cardiothoracic_ratio import (find_contours as ctr_find_contours, 
+                                  center_point as ctr_center_point, 
+                                  center_point_one as ctr_center_point_one, 
+                                  full_mask as ctr_full_mask, 
+                                  bitwise_mask as ctr_bitwise_mask, 
+                                  get_longest_line as ctr_get_longest_line)
+import cardiothoracic_ratio
+
+from peripheral_area import (find_contours as peripheral_find_contours, 
+                            center_point as peripheral_center_point, 
+                            center_point_one as peripheral_center_point_one, 
+                            full_mask as peripheral_full_mask, 
+                            bitwise_mask as peripheral_bitwise_mask)
+import peripheral_area
+
+from aorta_diameter import compute_diameter
+
+# Import segmentation_models_pytorch for LAA module
+try:
+    import segmentation_models_pytorch as smp
+except ImportError:
+    smp = None  # Will be checked when LAA module is used
+
 
 
 def resize_keep_ratio_pil(img_pil, target_size, interpolation="LANCZOS"):
@@ -522,7 +547,8 @@ class UnifiedDCXInference:
     
     def _init_laa_model(self):
         """Initialize LAA model (segmentation_models_pytorch with auxiliary params)"""
-        import segmentation_models_pytorch as smp
+        if smp is None:
+            raise ImportError("segmentation_models_pytorch is required for LAA module. Please install it with: pip install segmentation_models_pytorch")
         
         # Auxiliary parameters (DCX_python_inference exact)
         aux_params = dict(
@@ -2342,11 +2368,7 @@ def process_ctr_module(input_file, output_dir, input_basename, all_results):
         if not os.path.exists(heart_512_path):
             raise Exception("CTR requires heart mask. Failed to create temporary heart mask.")
         
-        # Import CTR calculation function
-        sys.path.append(os.path.join(os.path.dirname(__file__), 'src', 'insights'))
-        from cardiothoracic_ratio import (find_contours, center_point, center_point_one, 
-                                          full_mask, bitwise_mask, get_longest_line)
-        import cardiothoracic_ratio
+        # CTR calculation functions are already imported at the top
         
         # Read DICOM for metadata
         data = pydicom.dcmread(input_file)
@@ -2356,7 +2378,7 @@ def process_ctr_module(input_file, output_dir, input_basename, all_results):
         
         # Process lung contours
         lung_contour = []
-        img, lung_contours = find_contours(lung_2048_path)
+        img, lung_contours = ctr_find_contours(lung_2048_path)
         
         # Set global img variable for cardiothoracic_ratio module
         cardiothoracic_ratio.img = img
@@ -2370,13 +2392,13 @@ def process_ctr_module(input_file, output_dir, input_basename, all_results):
         
         # Calculate lung center and measurements
         if len(lung_contour) == 1:
-            center = center_point_one(lung_contour)
-            masks = full_mask(center, lung_contour)
+            center = ctr_center_point_one(lung_contour)
+            masks = ctr_full_mask(center, lung_contour)
         else:
-            center = center_point(lung_contour)
-            masks = full_mask(center, lung_contour)
+            center = ctr_center_point(lung_contour)
+            masks = ctr_full_mask(center, lung_contour)
         
-        mask, masked = bitwise_mask(img, masks, center, 1.0)
+        mask, masked = ctr_bitwise_mask(img, masks, center, 1.0)
         mask = mask[:,:,0]
         
         # Find MHTD (Maximum Horizontal Thoracic Diameter)
@@ -2491,13 +2513,10 @@ def process_peripheral_module(input_file, output_dir, input_basename, output_for
         if not os.path.exists(lung_2048_path):
             raise Exception("Peripheral masks require lung mask. Failed to create temporary lung mask.")
         
-        # Import the peripheral mask functions
-        sys.path.append(os.path.join(os.path.dirname(__file__), 'src', 'insights'))
-        from peripheral_area import find_contours, center_point, center_point_one, full_mask, bitwise_mask
-        import peripheral_area
+        # Peripheral mask functions are already imported at the top
         
         # Process lung mask to generate peripheral masks
-        img_color, lung_contours = find_contours(lung_2048_path)
+        img_color, lung_contours = peripheral_find_contours(lung_2048_path)
         peripheral_area.img = img_color
         
         # Filter contours (keep only significant ones > 1000 pixels)
@@ -2511,17 +2530,17 @@ def process_peripheral_module(input_file, output_dir, input_basename, output_for
         
         # Calculate center point
         if len(lung_contour) == 1:
-            center = center_point_one(lung_contour)
+            center = peripheral_center_point_one(lung_contour)
         else:
-            center = center_point(lung_contour)
+            center = peripheral_center_point(lung_contour)
         
         # Generate full mask
-        masks = full_mask(center, lung_contour)
+        masks = peripheral_full_mask(center, lung_contour)
         
         # Generate masks at different percentages
         masks_dict = {}
         for p in [0.5, 0.7]:
-            mask, masked = bitwise_mask(img_color, masks, center, p)
+            mask, masked = peripheral_bitwise_mask(img_color, masks, center, p)
             masks_dict[p] = mask[:,:,0]
         
         # Calculate areas using pixel spacing from DICOM
@@ -2712,9 +2731,7 @@ def process_diameter_module(input_file, output_dir, input_basename, all_results)
         if not os.path.exists(asc_file) or not os.path.exists(desc_file):
             raise Exception("Diameter calculation requires aorta masks. Failed to create aorta segmentation.")
         
-        # Import the diameter calculation function
-        sys.path.append(os.path.join(os.path.dirname(__file__), 'src', 'insights'))
-        from aorta_diameter import compute_diameter
+        # Diameter calculation function is already imported at the top
         
         # Prepare file dict for diameter calculation
         diameter_file_dict = {input_basename: []}
