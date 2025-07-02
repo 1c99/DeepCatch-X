@@ -1,4 +1,7 @@
 import os
+os.environ['MPLBACKEND'] = 'Agg'
+import matplotlib
+matplotlib.use('Agg')
 import nibabel
 import numpy as np
 import matplotlib.pyplot as plt
@@ -20,7 +23,7 @@ from sklearn.linear_model import Ridge
 from sklearn.preprocessing import PolynomialFeatures
 import numpy as np
 from sklearn.linear_model import Ridge
-from matplotlib import pyplot as plt
+# Already imported above
 from scipy import sparse
 from scipy.optimize import minimize, lsq_linear
 from matplotlib.collections import LineCollection

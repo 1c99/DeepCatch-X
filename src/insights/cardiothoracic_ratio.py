@@ -1,8 +1,11 @@
+import os
+os.environ['MPLBACKEND'] = 'Agg'
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import nibabel as nib
 import cv2
-import os
 import pydicom
 
 def printInfo(image, name=""):
