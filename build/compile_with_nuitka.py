@@ -60,8 +60,7 @@ def compile_inference(script_name, output_name=None):
         "--assume-yes-for-downloads",
         "--show-progress",
         f"--jobs={cpu_count}",  # Use all available CPU cores for faster compilation
-        "--enable-plugin=numpy",
-        "--enable-plugin=torch",
+        # Removed deprecated plugins - numpy and torch are auto-detected now
         "--enable-plugin=anti-bloat",  # Helps reduce unnecessary imports
         "--nofollow-import-to=matplotlib.backends",  # Skip matplotlib GUI backends
         "--nofollow-import-to=matplotlib.backends.qt_compat",
