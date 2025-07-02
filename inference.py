@@ -54,6 +54,14 @@ try:
 except ImportError:
     smp = None  # Will be checked when LAA module is used
 
+# Try to import embedded configs
+try:
+    from src.embedded_configs import CONFIGS
+    EMBEDDED_CONFIGS_AVAILABLE = True
+    print("✓ Using embedded configuration files")
+except ImportError:
+    EMBEDDED_CONFIGS_AVAILABLE = False
+
 
 
 def resize_keep_ratio_pil(img_pil, target_size, interpolation="LANCZOS"):
@@ -212,8 +220,21 @@ def ddim_sample(model, condition, device='cuda'):
 class UnifiedDCXInference:
     def __init__(self, config_path, device_override=None, output_format='nii', output_size='512', module_name=None, unified_csv=False, batch_mode=False):
         # Load configuration
-        with open(config_path, 'r') as f:
-            self.config = yaml.safe_load(f)
+        if EMBEDDED_CONFIGS_AVAILABLE:
+            # Use embedded config
+            config_name = os.path.basename(config_path).replace('.yaml', '')
+            if config_name in CONFIGS:
+                self.config = CONFIGS[config_name]
+                print(f"Loaded embedded config: {config_name}")
+            else:
+                # Fallback to file if embedded config not found
+                print(f"Warning: Embedded config '{config_name}' not found, loading from file")
+                with open(config_path, 'r') as f:
+                    self.config = yaml.safe_load(f)
+        else:
+            # Load from file
+            with open(config_path, 'r') as f:
+                self.config = yaml.safe_load(f)
         
         # Store module name for special handling (aorta0, aorta1)
         self.module_name = module_name
@@ -3248,7 +3269,6 @@ def main():
         print(f"{'#'*80}")
         print(f"Processed {len(input_files)} files")
         print(f"Output directory: {args.output_dir}")
-
 
 if __name__ == '__main__':
     main()

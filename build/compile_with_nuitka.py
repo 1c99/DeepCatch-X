@@ -31,6 +31,18 @@ def get_platform_info():
     print(f"🚀 CPU cores available: {cpu_count} (Nuitka will use all cores)")
     return system, machine
 
+def embed_configs():
+    """Embed configuration files before compilation"""
+    try:
+        from embed_configs import build_embedded_configs
+        print("\n📦 Embedding configuration files...")
+        build_embedded_configs()
+        return True
+    except Exception as e:
+        print(f"⚠️  Warning: Could not embed configs: {e}")
+        print("   Falling back to external config files")
+        return False
+
 def compile_inference(script_name, output_name=None):
     """Compile a Python script with Nuitka"""
     if output_name is None:
@@ -110,11 +122,17 @@ def compile_inference(script_name, output_name=None):
         cmd.append(f"--include-module={module}")
     
     # Include data directories
+    # Check if configs are embedded
+    embedded_configs = os.path.exists("src/embedded_configs.py")
+    
     data_dirs = [
-        ("configs", "configs"),
         ("checkpoints", "checkpoints"),
         ("src", "src"),
     ]
+    
+    # Only include configs directory if not embedded
+    if not embedded_configs:
+        data_dirs.insert(0, ("configs", "configs"))
     
     for src, dest in data_dirs:
         if os.path.exists(src):
@@ -171,14 +189,34 @@ def create_distribution_package(name):
     system = platform.system()
     if system == "Windows":
         run_script = f"""@echo off
+REM Set threading environment variables to avoid conflicts
+set MKL_THREADING_LAYER=sequential
+set OMP_NUM_THREADS=1
+set MKL_NUM_THREADS=1
+
 cd /d "%~dp0"
-{name}\\{name}.exe %*
+cd {name}\\{name}.dist
+{name}.exe %*
 """
         script_name = f"run_{name}.bat"
     else:
         run_script = f"""#!/bin/bash
-cd "$(dirname "$0")"
-./{name}/{name} "$@"
+
+# Set threading environment variables to avoid MKL conflicts
+export MKL_THREADING_LAYER=sequential
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
+# Navigate to script directory
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/{name}/{name}.dist"
+
+# Run the executable (try both .bin and no extension)
+if [ -f "./{name}.bin" ]; then
+    ./{name}.bin "$@"
+else
+    ./{name} "$@"
+fi
 """
         script_name = f"run_{name}.sh"
     
@@ -224,6 +262,8 @@ Run the executable using:
 1. This executable is platform-specific for {platform.system()} {platform.machine()}
 2. Model checkpoint files (.pth, .pt) need to be added separately
 3. For other platforms, compile from source
+4. Threading is set to single-threaded mode to avoid MKL conflicts
+   - To use multiple threads, edit the run script and change OMP_NUM_THREADS
 """
     
     with open(dist_path / "README.md", "w") as f:
@@ -248,6 +288,20 @@ def main():
     if not os.path.exists("inference.py"):
         print("✗ Error: inference.py not found. Run this from the project root.")
         return
+    
+    # Ask about config embedding
+    print("\nConfiguration file handling:")
+    print("1. Embed configs into binary (more secure, no external files)")
+    print("2. Keep configs as external files (easier to modify)")
+    
+    config_choice = input("\nEnter choice (1-2) [default: 2]: ").strip() or "2"
+    
+    if config_choice == "1":
+        # Try to embed configs
+        if embed_configs():
+            print("✓ Configs will be embedded in the binary")
+        else:
+            print("⚠️  Continuing with external config files")
     
     # Ask what to compile
     print("\nWhat would you like to compile?")

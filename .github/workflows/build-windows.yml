@@ -91,7 +91,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: dcx-windows-executable
-        path: dcx-windows/
+        path: dcx-windows/    
         retention-days: 30
     
     - name: Upload build logs (on failure)
