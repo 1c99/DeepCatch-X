@@ -131,6 +131,11 @@ def compile_inference(script_name, output_name=None):
     for module in insight_modules:
         cmd.append(f"--include-module={module}")
     
+    # Exclude matplotlib from insights modules during compilation
+    cmd.extend([
+        "--nofollow-import-to=matplotlib",  # Don't follow any matplotlib imports
+    ])
+    
     # Include data directories
     # Check if configs are embedded
     embedded_configs = os.path.exists("src/embedded_configs.py")
