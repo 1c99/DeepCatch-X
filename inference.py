@@ -6,8 +6,13 @@ Supports 4 groups of modules with exact original functionality
 # Configure matplotlib to use non-GUI backend before importing
 import os
 os.environ['MPLBACKEND'] = 'Agg'  # Force Agg backend via environment
-import matplotlib
-matplotlib.use('Agg', force=True)  # Force Agg backend
+# Try to set matplotlib backend if available (Nuitka-safe)
+try:
+    import matplotlib
+    if hasattr(matplotlib, 'use'):
+        matplotlib.use('Agg', force=True)  # Force Agg backend
+except (ImportError, AttributeError):
+    pass  # Continue without setting backend explicitly
 import sys
 import numpy as np
 import pydicom as dicom
@@ -1262,7 +1267,10 @@ class UnifiedDCXInference:
         
         # Transpose for COVID and vessel modules (lung-based modules)
         if self.module_name in ['covid', 'vessel']:
+            print(f"DEBUG: Transposing output for {self.module_name} module")
             output_2d = np.transpose(output_2d)
+        else:
+            print(f"DEBUG: Not transposing output for {self.module_name} module")
         
         # Use the optimized DICOM creation function
         self._create_dicom_file_optimized(output_2d, self._original_dicom_path, output_path)
