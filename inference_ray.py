@@ -13,8 +13,7 @@ import ray
 import numpy as np
 from datetime import datetime
 
-# Add core directory to path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'core'))
+# No dynamic path manipulation needed - use proper module imports
 
 
 @ray.remote
@@ -400,8 +399,7 @@ def process_post_module(module, input_file, output_dir, output_format, all_resul
     import os
     import numpy as np
     
-    # Add paths for imports
-    sys.path.append(os.path.join(os.path.dirname(__file__), 'src', 'insights'))
+    # Use proper module imports instead of dynamic paths
     
     try:
         input_basename = os.path.splitext(os.path.basename(input_file))[0]
@@ -430,9 +428,9 @@ def process_post_module(module, input_file, output_dir, output_format, all_resul
             import cv2
             import nibabel as nib
             import pydicom
-            from cardiothoracic_ratio import (find_contours, center_point, center_point_one, 
-                                              full_mask, bitwise_mask, get_longest_line)
-            import cardiothoracic_ratio
+            from src.insights.cardiothoracic_ratio import (find_contours, center_point, center_point_one, 
+                                                           full_mask, bitwise_mask, get_longest_line)
+            from src.insights import cardiothoracic_ratio
             
             # Import the unified inference for creating temp files if needed
             from inference import UnifiedDCXInference
@@ -581,8 +579,8 @@ def process_post_module(module, input_file, output_dir, output_format, all_resul
             
             # Import peripheral-specific modules
             import pydicom as dicom
-            from peripheral_area import find_contours, center_point, center_point_one, full_mask, bitwise_mask
-            import peripheral_area
+            from src.insights.peripheral_area import find_contours, center_point, center_point_one, full_mask, bitwise_mask
+            from src.insights import peripheral_area
             
             # Import the unified inference for creating temp files if needed
             from inference import UnifiedDCXInference

@@ -23,9 +23,6 @@ import glob
 import cv2
 from datetime import datetime
 
-# Add core directory to path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'core'))
-
 from src.utils.base_options import BaseOptions
 from src.utils.model_factory import create_model_v2 as create_model
 
