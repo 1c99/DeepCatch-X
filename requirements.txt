@@ -26,9 +26,8 @@ matplotlib>=3.8.0
 # Configuration
 PyYAML>=6.0.0
 
-# Optional: For advanced medical imaging (if needed)
-# segmentation_models_pytorch>=0.5.0
-# TotalSegmentator>=2.8.0
+# For LAA (Low Attenuation Areas) module
+segmentation-models-pytorch>=0.3.0
 
 # Development tools (optional)
 # jupyter
