@@ -1168,6 +1168,12 @@ class UnifiedDCXInference:
         elif self.output_format == 'png':
             # Save as PNG image
             self._save_as_png(output, output_path)
+        elif self.output_format == 'npy':
+            # Save as NumPy array
+            self._save_as_npy(output, output_path)
+        elif self.output_format == 'bmp':
+            # Save as BMP (fast uncompressed bitmap)
+            self._save_as_bmp(output, output_path)
         else:
             # Save as NIfTI (default)
             nii_np = np.transpose(output, axes=[3, 2, 1, 0])
@@ -1389,8 +1395,60 @@ class UnifiedDCXInference:
         img.save(png_path)
         print(f"PNG saved to: {png_path}")
     
+    def _save_as_npy(self, output, output_path):
+        """Save output as NumPy array (.npy file)"""
+        # Get 2D array from 4D segmentation output
+        output_2d = output[0, 0]  # Extract 2D array
+        
+        # Transpose for COVID and vessel modules (lung-based modules)
+        if self.module_name in ['covid', 'vessel']:
+            output_2d = np.transpose(output_2d)
+        
+        # Create output directory if needed
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            
+        # Change extension to .npy
+        npy_path = output_path.replace('.nii', '.npy').replace('.dcm', '.npy').replace('.png', '.npy')
+        
+        # Save as numpy array (preserves original values)
+        np.save(npy_path, output_2d)
+        print(f"NPY saved to: {npy_path}")
+    
+    def _save_as_bmp(self, output, output_path):
+        """Save output as BMP image (fast uncompressed format)"""
+        # Get 2D array from 4D segmentation output
+        output_2d = output[0, 0]  # Extract 2D array
+        
+        # Transpose for COVID and vessel modules (lung-based modules)
+        if self.module_name in ['covid', 'vessel']:
+            output_2d = np.transpose(output_2d)
+        
+        # Normalize to 0-255 range for BMP
+        output_min, output_max = output_2d.min(), output_2d.max()
+        if output_max > output_min:
+            normalized = ((output_2d - output_min) / (output_max - output_min) * 255).astype(np.uint8)
+        else:
+            normalized = np.zeros_like(output_2d, dtype=np.uint8)
+        
+        # Convert to PIL Image and save
+        img = Image.fromarray(normalized)
+        
+        # Create output directory if needed
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            
+        # Change extension to .bmp
+        bmp_path = output_path.replace('.nii', '.bmp').replace('.dcm', '.bmp').replace('.png', '.bmp')
+        
+        # Save as BMP - no compression, faster than PNG
+        img.save(bmp_path, 'BMP')
+        print(f"BMP saved to: {bmp_path}")
+    
     def _load_segmentation_file(self, file_path):
-        """Load segmentation file in any format (NIfTI, DICOM, PNG)"""
+        """Load segmentation file in any format (NIfTI, DICOM, PNG, NPY, BMP)"""
         file_ext = os.path.splitext(file_path)[1].lower()
         
         if file_ext == '.nii':
@@ -1401,10 +1459,13 @@ class UnifiedDCXInference:
             # Load DICOM file
             ds = dicom.dcmread(file_path)
             return ds.pixel_array.astype(np.float64)
-        elif file_ext == '.png':
-            # Load PNG file
+        elif file_ext in ['.png', '.bmp']:
+            # Load PNG or BMP file
             img = Image.open(file_path)
             return np.array(img).astype(np.float64)
+        elif file_ext == '.npy':
+            # Load NumPy array file
+            return np.load(file_path).astype(np.float64)
         else:
             raise ValueError(f"Unsupported file format: {file_ext}")
     

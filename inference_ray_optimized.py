@@ -290,14 +290,24 @@ class OptimizedModuleWorker:
             input_basename = os.path.splitext(os.path.basename(input_file))[0]
             
             # Determine output filename based on module
-            if module == 'bone_supp':
-                output_filename = f"{input_basename}_{module}.{params['output_format']}"
-            elif module == 'aorta0':
-                output_filename = f"{input_basename}_aorta_asc.{params['output_format']}"
-            elif module == 'aorta1':
-                output_filename = f"{input_basename}_aorta_desc.{params['output_format']}"
+            output_format = params['output_format']
+            
+            # Support NPY and BMP formats
+            if output_format == 'npy':
+                file_ext = 'npy'
+            elif output_format == 'bmp':
+                file_ext = 'bmp'
             else:
-                output_filename = f"{input_basename}_{module}.{params['output_format']}"
+                file_ext = output_format
+                
+            if module == 'bone_supp':
+                output_filename = f"{input_basename}_{module}.{file_ext}"
+            elif module == 'aorta0':
+                output_filename = f"{input_basename}_aorta_asc.{file_ext}"
+            elif module == 'aorta1':
+                output_filename = f"{input_basename}_aorta_desc.{file_ext}"
+            else:
+                output_filename = f"{input_basename}_{module}.{file_ext}"
                 
             output_file = os.path.join(output_dir, output_filename)
             
@@ -377,7 +387,7 @@ class OptimizedModuleWorker:
             if module in ['covid', 'vessel'] and 'output' in results:
                 print(f"\nApplying transpose correction for {module}...")
                 output_data = results.get('output')
-                if output_data is not None and params['output_format'] in ['png', 'dcm']:
+                if output_data is not None and params['output_format'] in ['png', 'dcm', 'npy', 'bmp']:
                     import time
                     time.sleep(0.1)  # Small delay to ensure file is written
                     
@@ -419,6 +429,35 @@ class OptimizedModuleWorker:
                         # Save corrected DICOM
                         ds.save_as(output_file)
                         print(f"  Saved corrected {module} DICOM: {output_file}")
+                    
+                    elif params['output_format'] == 'npy' and os.path.exists(output_file):
+                        # For NPY, load and correct
+                        npy_array = np.load(output_file)
+                        print(f"  Original NPY shape: {npy_array.shape}")
+                        
+                        # Apply transpose
+                        npy_transposed = np.transpose(npy_array)
+                        print(f"  Transposed NPY shape: {npy_transposed.shape}")
+                        
+                        # Save the corrected NPY
+                        np.save(output_file, npy_transposed)
+                        print(f"  Saved corrected {module} NPY: {output_file}")
+                    
+                    elif params['output_format'] == 'bmp' and os.path.exists(output_file):
+                        # For BMP, load and correct
+                        from PIL import Image
+                        img = Image.open(output_file)
+                        img_array = np.array(img)
+                        print(f"  Original BMP shape: {img_array.shape}")
+                        
+                        # Apply transpose
+                        img_transposed = np.transpose(img_array)
+                        print(f"  Transposed BMP shape: {img_transposed.shape}")
+                        
+                        # Save the corrected BMP
+                        img_corrected = Image.fromarray(img_transposed)
+                        img_corrected.save(output_file, 'BMP')
+                        print(f"  Saved corrected {module} BMP: {output_file}")
             
             # Always create temp NII files for specific modules regardless of output format
             if module in ['lung', 'heart', 'aorta', 'aorta0', 'aorta1'] and 'output' in results:
@@ -1101,8 +1140,8 @@ def main():
     parser.add_argument('--output_dir', type=str, required=True,
                        help='Path to output directory')
     parser.add_argument('--output_format', type=str, default='png',
-                       choices=['nii', 'dcm', 'png'],
-                       help='Output format')
+                       choices=['nii', 'dcm', 'png', 'npy', 'bmp'],
+                       help='Output format (npy=NumPy array, bmp=fast uncompressed bitmap)')
     parser.add_argument('--output_size', type=str, default='original',
                        choices=['original', '512', '2048'],
                        help='Output size')
