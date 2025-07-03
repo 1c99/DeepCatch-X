@@ -1,15 +1,18 @@
 import os
-os.environ['MPLBACKEND'] = 'Agg'
-# Try to set matplotlib backend if available (Nuitka-safe)
+# Conditional matplotlib import for visualization
+# Only import if needed (when visualize=True)
 try:
     import matplotlib
-    if hasattr(matplotlib, 'use'):
-        matplotlib.use('Agg')
-except (ImportError, AttributeError):
-    import matplotlib  # Import anyway if the try block failed
+    matplotlib.use('Agg')  # Use non-interactive backend
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import LineCollection
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    print("Warning: matplotlib not available, visualization disabled")
+
 import nibabel
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter, gaussian_filter1d, distance_transform_edt
 from scipy.interpolate import interp1d
 from scipy.spatial.distance import euclidean
@@ -17,7 +20,6 @@ import time
 from cv2 import connectedComponentsWithStats
 import cv2
 from skimage.transform import rescale
-from matplotlib.collections import LineCollection
 import sys
 from skimage.feature import hessian_matrix, hessian_matrix_eigvals
 
@@ -31,7 +33,6 @@ from sklearn.linear_model import Ridge
 # Already imported above
 from scipy import sparse
 from scipy.optimize import minimize, lsq_linear
-from matplotlib.collections import LineCollection
 
 def cubic_formula(a, b, c, d):
     delta_0 = (b**2 - 3*a*c).astype('complex')
@@ -839,6 +840,11 @@ def get_largest_mask(image):
 def compute_diameter(output_folder, input_folder, file_dict, head, ASCENDING_ONLY=False, ABDOMINAL = False, visualize=True, heat_map = True):
     if ABDOMINAL: ASCENDING_ONLY = True
     
+    # Check if matplotlib is available for visualization
+    if visualize and not MATPLOTLIB_AVAILABLE:
+        print("Warning: Visualization requested but matplotlib not available, disabling visualization")
+        visualize = False
+    
     pic_section, raw_section, zoom_section = preprocess(input_folder, file_dict, head)
 
     valid_skeleton = True
@@ -912,7 +918,7 @@ def compute_diameter(output_folder, input_folder, file_dict, head, ASCENDING_ONL
             if len(skeleton_set[0]) == 0:
                 valid_skeleton = False
                 print('no skeleton')
-                return
+                return []
 
             skeleton_interpolated = connect_skeleton_candidates(skeleton_set, largest_mask)
             skeleton_final = smooth_gaussian(skeleton_interpolated)

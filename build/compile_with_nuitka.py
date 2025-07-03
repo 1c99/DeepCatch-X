@@ -101,7 +101,9 @@ def compile_inference(script_name, output_name=None):
     packages_to_include = [
         "torch", "torchvision", "numpy", "scipy", "PIL", 
         "pydicom", "nibabel", "skimage",
-        "pandas"  # Common packages
+        "pandas",  # Common packages
+        # Note: matplotlib is now optional in the insight modules
+        # The code will work without it, just without visualization
     ]
     
     # Add yaml carefully to avoid assertion errors
@@ -130,10 +132,7 @@ def compile_inference(script_name, output_name=None):
     for module in insight_modules:
         cmd.append(f"--include-module={module}")
     
-    # Exclude matplotlib from insights modules during compilation
-    cmd.extend([
-        "--nofollow-import-to=matplotlib",  # Don't follow any matplotlib imports
-    ])
+    # Note: matplotlib is optional and handled conditionally in the code
     
     # Include data directories
     # Check if configs are embedded
@@ -144,9 +143,7 @@ def compile_inference(script_name, output_name=None):
         ("src", "src"),
     ]
     
-    # Include matplotlib config to force Agg backend
-    if os.path.exists("src/matplotlibrc"):
-        cmd.append("--include-data-file=src/matplotlibrc=matplotlib/mpl-data/matplotlibrc")
+    # Note: matplotlib config not needed as matplotlib is optional
     
     # Only include configs directory if not embedded
     if not embedded_configs:
@@ -187,6 +184,7 @@ opencv-python>=4.5.0
 scikit-image>=0.18.0
 ray>=2.0.0
 pandas>=1.3.0
+segmentation-models-pytorch>=0.2.0
 """
     
     with open("requirements.txt", "w") as f:

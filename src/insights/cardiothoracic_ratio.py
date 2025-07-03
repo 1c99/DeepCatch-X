@@ -1,13 +1,6 @@
 import os
-os.environ['MPLBACKEND'] = 'Agg'
-# Try to set matplotlib backend if available (Nuitka-safe)
-try:
-    import matplotlib
-    if hasattr(matplotlib, 'use'):
-        matplotlib.use('Agg')
-except (ImportError, AttributeError):
-    import matplotlib  # Import anyway if the try block failed
-import matplotlib.pyplot as plt
+# Remove matplotlib dependency for Nuitka builds
+# All plt.show() and plt.imshow() calls are commented out anyway
 import numpy as np
 import nibabel as nib
 import cv2
@@ -394,10 +387,10 @@ if __name__ == '__main__':
     left_heart = heart_data[:, :int(center)]
     right_heart = heart_data[:, int(center):]
     
-    plt.imshow(left_heart, cmap='gray')
-    plt.show()
-    plt.imshow(right_heart, cmap='gray')
-    plt.show()
+#    plt.imshow(left_heart, cmap='gray')
+#    plt.show()
+#    plt.imshow(right_heart, cmap='gray')
+#    plt.show()
     
     left_longest_line = get_longest_line(left_heart, center, 2048)
     right_longest_line = get_longest_line(right_heart, 2048-center, 2048)
@@ -422,15 +415,15 @@ if __name__ == '__main__':
     
     print('CT Ratio:', ct_ratio)
     
-    plt.imshow(heart_data, cmap='gray')
-    plt.plot([center, center], [0, 2047], 'r-', label='Center')
-    plt.plot([left_longest_line[0][0], left_longest_line[1][0]], 
-             [left_longest_line[0][1], left_longest_line[1][1]], 
-             'g-', label='A1')
-    plt.plot([right_longest_line[0][0] + center, right_longest_line[1][0] + center],
-                [right_longest_line[0][1], right_longest_line[1][1]], 
-                'b-', label='A2')
+#    plt.imshow(heart_data, cmap='gray')
+#    plt.plot([center, center], [0, 2047], 'r-', label='Center')
+#    plt.plot([left_longest_line[0][0], left_longest_line[1][0]], 
+            #  [left_longest_line[0][1], left_longest_line[1][1]], 
+            #  'g-', label='A1')
+#    plt.plot([right_longest_line[0][0] + center, right_longest_line[1][0] + center],
+                # [right_longest_line[0][1], right_longest_line[1][1]], 
+                # 'b-', label='A2')
     
-    plt.legend()
-    plt.show()
+#    plt.legend()
+#    plt.show()
     

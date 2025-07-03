@@ -1,2 +1,3 @@
-# Force Agg backend for Nuitka builds
+# Matplotlib configuration for Nuitka builds
+# Force Agg backend for headless operation
 backend : Agg

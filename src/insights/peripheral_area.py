@@ -4,15 +4,7 @@
 # In[34]:
 
 import os
-os.environ['MPLBACKEND'] = 'Agg'
-# Try to set matplotlib backend if available (Nuitka-safe)
-try:
-    import matplotlib
-    if hasattr(matplotlib, 'use'):
-        matplotlib.use('Agg')
-except (ImportError, AttributeError):
-    import matplotlib  # Import anyway if the try block failed
-import matplotlib.pyplot as plt
+# Remove matplotlib dependency for Nuitka builds
 import numpy as np
 import nibabel as nib
 import cv2
