@@ -75,12 +75,16 @@ def create_model_v2(opt):
 
     # model = remove_netG(model, model.state_dict())
     # Load checkpoint with appropriate device mapping
+    # Handle PyTorch 2.6+ security changes by allowing argparse.Namespace
+    import argparse
+    torch.serialization.add_safe_globals([argparse.Namespace])
+    
     if torch.cuda.is_available():
-        state = torch.load(opt.checkpoint_path)
+        state = torch.load(opt.checkpoint_path, weights_only=False)
     elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        state = torch.load(opt.checkpoint_path, map_location=torch.device('mps'))
+        state = torch.load(opt.checkpoint_path, map_location=torch.device('mps'), weights_only=False)
     else:
-        state = torch.load(opt.checkpoint_path, map_location=torch.device('cpu'))
+        state = torch.load(opt.checkpoint_path, map_location=torch.device('cpu'), weights_only=False)
 
     ordered_state_dict = OrderedDict()
     for k, v in state.get('weight').items():
