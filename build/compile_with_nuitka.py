@@ -169,11 +169,9 @@ def compile_inference(script_name, output_name=None):
         "--include-package-data=segmentation_models_pytorch",
     ])
     
-    # Windows-specific: Include DLLs and binary dependencies
+    # Windows-specific: Enable multiprocessing support
     if system == "Windows":
         cmd.extend([
-            "--include-data-files={PACKAGE}/cv2/*.dll=cv2/",  # OpenCV DLLs
-            "--include-data-files={PACKAGE}/torch/lib/*.dll=torch/lib/",  # PyTorch DLLs
             "--enable-plugin=multiprocessing",  # For Windows multiprocessing support
         ])
     
