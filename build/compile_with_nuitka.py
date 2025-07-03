@@ -91,11 +91,17 @@ def compile_inference(script_name, output_name=None):
         pass
     elif system == "Windows":
         cmd.extend([
-            "--windows-console-mode=disable",  # Updated syntax for newer Nuitka
+            "--windows-console-mode=force",  # Force console window to show output
+            "--windows-onefile-tempdir-spec=%TEMP%\\dcx_temp",  # Specify temp directory
         ])
         # Only add icon if it exists
         if os.path.exists("icon.ico"):
             cmd.append("--windows-icon-from-ico=icon.ico")
+        # Add Windows-specific optimizations
+        cmd.extend([
+            "--plugin-enable=numpy",  # Explicitly enable numpy plugin for Windows
+            "--plugin-enable=torch",  # Explicitly enable torch plugin for Windows
+        ])
     
     # Add required packages and modules
     packages_to_include = [
@@ -191,7 +197,7 @@ segmentation-models-pytorch>=0.2.0
         f.write(requirements)
     print("✓ Created requirements.txt")
 
-def create_distribution_package(name):
+def create_distribution_package(name, cleanup=True):
     """Create a distribution package with all necessary files"""
     dist_path = Path(f"dist/{name}_package")
     dist_path.mkdir(parents=True, exist_ok=True)
@@ -200,6 +206,13 @@ def create_distribution_package(name):
     exec_path = Path(f"dist/{name}")
     if exec_path.exists():
         shutil.copytree(exec_path, dist_path / name, dirs_exist_ok=True)
+        
+        # Clean up the intermediate directory if requested
+        if cleanup:
+            print(f"✓ Cleaning up intermediate directory: {exec_path}")
+            shutil.rmtree(exec_path)
+        else:
+            print(f"✓ Keeping intermediate directory: {exec_path}")
     
     # Create run script
     system = platform.system()
@@ -327,16 +340,24 @@ def main():
     
     choice = input("\nEnter choice (1-3): ").strip()
     
+    # Ask about cleanup
+    print("\nCleanup options:")
+    print("1. Keep intermediate build directories (for debugging)")
+    print("2. Remove intermediate directories (save space)")
+    
+    cleanup_choice = input("\nEnter choice (1-2) [default: 2]: ").strip() or "2"
+    cleanup = (cleanup_choice == "2")
+    
     success = []
     
     if choice in ["1", "3"]:
         if compile_inference("inference.py", "inference"):
-            create_distribution_package("inference")
+            create_distribution_package("inference", cleanup)
             success.append("inference")
     
     if choice in ["2", "3"]:
         if compile_inference("inference_ray.py", "inference_ray"):
-            create_distribution_package("inference_ray")
+            create_distribution_package("inference_ray", cleanup)
             success.append("inference_ray")
     
     if success:
