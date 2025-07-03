@@ -100,7 +100,7 @@ def compile_inference(script_name, output_name=None):
     
     # Add required packages and modules
     packages_to_include = [
-        "torch", "torchvision", "numpy", "scipy", "PIL", 
+        "torch", "torchvision", "numpy", "scipy", "PIL",  
         "pydicom", "nibabel", "skimage",
         "pandas",  # Common packages
         # Note: matplotlib is now optional in the insight modules
@@ -138,6 +138,17 @@ def compile_inference(script_name, output_name=None):
     # Include data directories
     # Check if configs are embedded
     embedded_configs = os.path.exists("src/embedded_configs.py")
+    
+    # Clean up macOS files from checkpoints before compilation
+    try:
+        from clean_checkpoints import clean_checkpoints
+        if os.path.exists("checkpoints"):
+            clean_checkpoints("checkpoints")
+    except ImportError:
+        # If clean_checkpoints is not available, do basic cleanup
+        if os.path.exists("checkpoints/.DS_Store"):
+            os.remove("checkpoints/.DS_Store")
+            print("✓ Removed checkpoints/.DS_Store")
     
     data_dirs = [
         ("checkpoints", "checkpoints"),
