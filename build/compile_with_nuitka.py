@@ -101,6 +101,7 @@ def compile_inference(script_name, output_name=None):
         cmd.extend([
             "--plugin-enable=numpy",  # Explicitly enable numpy plugin for Windows
             "--plugin-enable=torch",  # Explicitly enable torch plugin for Windows
+            "--module-parameter=torch-disable-jit=yes",  # Disable Torch JIT for standalone
         ])
     
     # Add required packages and modules

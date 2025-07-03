@@ -11,6 +11,11 @@ def create_test_script():
     """Create a minimal test script to verify Nuitka works"""
     test_content = '''
 import sys
+import os
+
+# Force matplotlib to use non-GUI backend before import
+os.environ['MPLBACKEND'] = 'Agg'
+
 print("DCX Test Script Running")
 print(f"Python version: {sys.version}")
 print(f"Arguments: {sys.argv}")
@@ -42,6 +47,8 @@ def compile_test_script():
         "--standalone",
         "--windows-console-mode=force",
         "--assume-yes-for-downloads",
+        "--module-parameter=torch-disable-jit=yes",  # Disable Torch JIT
+        "--nofollow-import-to=matplotlib.backends",  # Skip matplotlib backends
         "--output-dir=test_dist",
         "test_nuitka.py"
     ]
@@ -97,8 +104,8 @@ def fix_inference_main():
     """Ensure inference.py has a proper main function"""
     print("\nChecking inference.py for main function...")
     
-    # Read current inference.py
-    with open("inference.py", "r") as f:
+    # Read current inference.py with UTF-8 encoding
+    with open("inference.py", "r", encoding="utf-8") as f:
         content = f.read()
     
     # Check if main() exists
