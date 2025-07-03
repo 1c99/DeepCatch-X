@@ -14,6 +14,7 @@ from PIL import Image
 from math import ceil, floor
 import torchvision.transforms as transforms
 from collections import OrderedDict
+import argparse
 
 def CreateDataLoader(opt):
     dataloader = CustomDatasetDataLoader()
@@ -72,12 +73,6 @@ def create_model_v2(opt):
                 break
     elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() and len(opt.gpu_ids) > 0:
         model = model.to('mps')
-
-    # model = remove_netG(model, model.state_dict())
-    # Load checkpoint with appropriate device mapping
-    # Handle PyTorch 2.6+ security changes by allowing argparse.Namespace
-    import argparse
-    torch.serialization.add_safe_globals([argparse.Namespace])
     
     if torch.cuda.is_available():
         state = torch.load(opt.checkpoint_path, weights_only=False)
