@@ -27,7 +27,7 @@ from scipy.ndimage import gaussian_filter
 import glob
 import cv2
 from datetime import datetime
-
+import time
 from src.utils.base_options import BaseOptions
 from src.utils.model_factory import create_model_v2 as create_model
 
@@ -1267,10 +1267,7 @@ class UnifiedDCXInference:
         
         # Transpose for COVID and vessel modules (lung-based modules)
         if self.module_name in ['covid', 'vessel']:
-            print(f"DEBUG: Transposing output for {self.module_name} module")
             output_2d = np.transpose(output_2d)
-        else:
-            print(f"DEBUG: Not transposing output for {self.module_name} module")
         
         # Use the optimized DICOM creation function
         self._create_dicom_file_optimized(output_2d, self._original_dicom_path, output_path)

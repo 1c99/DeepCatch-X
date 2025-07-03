@@ -28,3 +28,6 @@ results/
 *.ckpt
 *.h5
 *.pkl
+# macOS system files
+.DS_Store
+**/.DS_Store
