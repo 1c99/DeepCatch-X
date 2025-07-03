@@ -22,6 +22,54 @@ def check_nuitka():
         subprocess.run([sys.executable, "-m", "pip", "install", "nuitka"])
         return True
 
+def verify_critical_files():
+    """Verify critical files exist before compilation"""
+    print("\n🔍 Verifying critical files...")
+    issues = []
+    
+    # Check for pydicom data files
+    try:
+        import pydicom
+        pydicom_path = Path(pydicom.__file__).parent
+        urls_json = pydicom_path / "data" / "urls.json"
+        if not urls_json.exists():
+            issues.append(f"⚠️  Missing pydicom urls.json at {urls_json}")
+        else:
+            print(f"✓ Found pydicom urls.json")
+    except ImportError:
+        issues.append("⚠️  pydicom not installed")
+    
+    # Check for checkpoint files
+    if os.path.exists("checkpoints"):
+        checkpoint_files = list(Path("checkpoints").glob("**/*.pth")) + \
+                          list(Path("checkpoints").glob("**/*.pt"))
+        if checkpoint_files:
+            print(f"✓ Found {len(checkpoint_files)} checkpoint files")
+        else:
+            issues.append("⚠️  No checkpoint files found in checkpoints/")
+    else:
+        issues.append("⚠️  checkpoints/ directory not found")
+    
+    # Check for config files
+    if not os.path.exists("configs"):
+        issues.append("⚠️  configs/ directory not found")
+    else:
+        config_files = list(Path("configs").glob("**/*.yaml"))
+        if config_files:
+            print(f"✓ Found {len(config_files)} config files")
+        else:
+            issues.append("⚠️  No YAML config files found in configs/")
+    
+    if issues:
+        print("\n⚠️  Issues found:")
+        for issue in issues:
+            print(f"   {issue}")
+        response = input("\nContinue anyway? (y/n): ")
+        return response.lower() == 'y'
+    
+    print("✓ All critical files verified")
+    return True
+
 def get_platform_info():
     """Get current platform information"""
     system = platform.system()
@@ -107,6 +155,28 @@ def compile_inference(script_name, output_name=None):
         # The code will work without it, just without visualization
     ]
     
+    # Include package data files (critical for pydicom)
+    cmd.extend([
+        "--include-package-data=pydicom",  # Include pydicom data files like urls.json
+        "--include-package-data=nibabel",
+        "--include-package-data=PIL",
+        "--include-package-data=scipy",
+        "--include-package-data=numpy",
+        "--include-package-data=torch",
+        "--include-package-data=torchvision",
+        "--include-package-data=cv2",
+        "--include-package-data=skimage",
+        "--include-package-data=segmentation_models_pytorch",
+    ])
+    
+    # Windows-specific: Include DLLs and binary dependencies
+    if system == "Windows":
+        cmd.extend([
+            "--include-data-files={PACKAGE}/cv2/*.dll=cv2/",  # OpenCV DLLs
+            "--include-data-files={PACKAGE}/torch/lib/*.dll=torch/lib/",  # PyTorch DLLs
+            "--enable-plugin=multiprocessing",  # For Windows multiprocessing support
+        ])
+    
     # Add yaml carefully to avoid assertion errors
     if system != "Linux":
         packages_to_include.append("yaml")
@@ -140,15 +210,20 @@ def compile_inference(script_name, output_name=None):
     embedded_configs = os.path.exists("src/embedded_configs.py")
     
     # Clean up macOS files from checkpoints before compilation
-    try:
-        from clean_checkpoints import clean_checkpoints
-        if os.path.exists("checkpoints"):
-            clean_checkpoints("checkpoints")
-    except ImportError:
-        # If clean_checkpoints is not available, do basic cleanup
-        if os.path.exists("checkpoints/.DS_Store"):
-            os.remove("checkpoints/.DS_Store")
-            print("✓ Removed checkpoints/.DS_Store")
+    if os.path.exists("checkpoints"):
+        # Do basic cleanup of macOS files
+        for root, dirs, files in os.walk("checkpoints"):
+            for file in files:
+                if file == ".DS_Store" or file.startswith("._"):
+                    file_path = os.path.join(root, file)
+                    os.remove(file_path)
+                    print(f"✓ Removed {file_path}")
+            # Remove __MACOSX directories
+            if "__MACOSX" in dirs:
+                macos_path = os.path.join(root, "__MACOSX")
+                shutil.rmtree(macos_path)
+                dirs.remove("__MACOSX")
+                print(f"✓ Removed directory: {macos_path}")
     
     data_dirs = [
         ("checkpoints", "checkpoints"),
@@ -175,7 +250,7 @@ def compile_inference(script_name, output_name=None):
     print(f"Command: {' '.join(cmd)}")
     
     try:
-        result = subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True)
         print(f"✓ Successfully compiled {script_name}")
         return True
     except subprocess.CalledProcessError as e:
@@ -308,6 +383,13 @@ Run the executable using:
 
 def main():
     """Main compilation process"""
+    # Windows console fix
+    if platform.system() == "Windows":
+        import sys
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', line_buffering=True)
+    
     print("🚀 DCX Nuitka Compilation Tool")
     print("=" * 50)
     
@@ -322,6 +404,11 @@ def main():
     # Check if we're in the right directory
     if not os.path.exists("inference.py"):
         print("✗ Error: inference.py not found. Run this from the project root.")
+        return
+    
+    # Verify critical files
+    if not verify_critical_files():
+        print("\n❌ Compilation cancelled due to missing files.")
         return
     
     # Ask about config embedding
@@ -382,3 +469,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
