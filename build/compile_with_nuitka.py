@@ -87,7 +87,6 @@ def compile_inference(script_name, output_name=None):
     elif system == "Windows":
         cmd.extend([
             "--windows-console-mode=force",  # Force console window to show output
-            "--windows-onefile-tempdir-spec=%TEMP%\\dcx_temp",  # Specify temp directory
         ])
         # Only add icon if it exists
         if os.path.exists("icon.ico"):
