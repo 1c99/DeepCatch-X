@@ -130,10 +130,9 @@ def compile_inference(script_name, output_name=None):
     
     # Platform-specific options
     if system == "Darwin":  # macOS
-        # macOS specific plugins
+        # macOS specific plugins (only use plugins that actually exist)
         cmd.extend([
             "--plugin-enable=numpy",
-            "--plugin-enable=scipy",
             "--plugin-enable=torch",
             "--module-parameter=torch-disable-jit=yes",
         ])
@@ -144,20 +143,16 @@ def compile_inference(script_name, output_name=None):
         # Only add icon if it exists
         if os.path.exists("icon.ico"):
             cmd.append("--windows-icon-from-ico=icon.ico")
-        # Add Windows-specific optimizations
+        # Add Windows-specific optimizations (only valid plugins)
         cmd.extend([
             "--plugin-enable=numpy",  # Explicitly enable numpy plugin for Windows
-            "--plugin-enable=scipy",  # Explicitly enable scipy plugin for Windows
-            "--plugin-enable=sklearn",  # Explicitly enable sklearn plugin for Windows
             "--plugin-enable=torch",  # Explicitly enable torch plugin for Windows
             "--module-parameter=torch-disable-jit=yes",  # Disable Torch JIT for standalone
         ])
     else:  # Linux/Ubuntu
-        # Linux specific plugins
+        # Linux specific plugins (only valid plugins)
         cmd.extend([
             "--plugin-enable=numpy",
-            "--plugin-enable=scipy",
-            "--plugin-enable=sklearn",
             "--plugin-enable=torch",
             "--module-parameter=torch-disable-jit=yes",
         ])
