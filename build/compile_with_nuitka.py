@@ -130,8 +130,13 @@ def compile_inference(script_name, output_name=None):
     
     # Platform-specific options
     if system == "Darwin":  # macOS
-        # For now, let's keep it simple without app bundle
-        pass
+        # macOS specific plugins
+        cmd.extend([
+            "--plugin-enable=numpy",
+            "--plugin-enable=scipy",
+            "--plugin-enable=torch",
+            "--module-parameter=torch-disable-jit=yes",
+        ])
     elif system == "Windows":
         cmd.extend([
             "--windows-console-mode=force",  # Force console window to show output
@@ -142,20 +147,40 @@ def compile_inference(script_name, output_name=None):
         # Add Windows-specific optimizations
         cmd.extend([
             "--plugin-enable=numpy",  # Explicitly enable numpy plugin for Windows
+            "--plugin-enable=scipy",  # Explicitly enable scipy plugin for Windows
+            "--plugin-enable=sklearn",  # Explicitly enable sklearn plugin for Windows
             "--plugin-enable=torch",  # Explicitly enable torch plugin for Windows
             "--module-parameter=torch-disable-jit=yes",  # Disable Torch JIT for standalone
         ])
+    else:  # Linux/Ubuntu
+        # Linux specific plugins
+        cmd.extend([
+            "--plugin-enable=numpy",
+            "--plugin-enable=scipy",
+            "--plugin-enable=sklearn",
+            "--plugin-enable=torch",
+            "--module-parameter=torch-disable-jit=yes",
+        ])
     
-    # Add required packages and modules
+    # Add required packages and modules based on requirements.txt
     packages_to_include = [
-        "torch", "torchvision", "numpy", "scipy", "PIL",  
-        "pydicom", "nibabel", "skimage",
-        "pandas",  # Common packages
+        # Core ML/DL packages
+        "torch", "torchvision", "numpy", "scipy", 
+        # Image processing
+        "PIL", "cv2", "skimage", "imageio",
+        # Medical imaging
+        "pydicom", "nibabel", "SimpleITK",
+        # ML utilities
+        "sklearn", "pandas", "tqdm",
+        # Model architecture
+        "segmentation_models_pytorch", "timm", "einops",
+        # Data processing
+        "yaml", "h5py",
         # Note: matplotlib is now optional in the insight modules
         # The code will work without it, just without visualization
     ]
     
-    # Include package data files (critical for pydicom)
+    # Include package data files (critical for many packages)
     cmd.extend([
         "--include-package-data=pydicom",  # Include pydicom data files like urls.json
         "--include-package-data=nibabel",
@@ -166,7 +191,15 @@ def compile_inference(script_name, output_name=None):
         "--include-package-data=torchvision",
         "--include-package-data=cv2",
         "--include-package-data=skimage",
+        "--include-package-data=sklearn",  # Include sklearn data files
         "--include-package-data=segmentation_models_pytorch",
+        "--include-package-data=SimpleITK",
+        "--include-package-data=imageio",
+        "--include-package-data=timm",
+        "--include-package-data=einops",
+        "--include-package-data=h5py",
+        "--include-package-data=pandas",
+        "--include-package-data=tqdm",
     ])
     
     # Windows-specific: Enable multiprocessing support
