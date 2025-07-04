@@ -130,10 +130,8 @@ def compile_inference(script_name, output_name=None):
     
     # Platform-specific options
     if system == "Darwin":  # macOS
-        # macOS specific plugins (only use plugins that actually exist)
+        # macOS specific options (plugins deprecated in Nuitka 2.7+)
         cmd.extend([
-            "--plugin-enable=numpy",
-            "--plugin-enable=torch",
             "--module-parameter=torch-disable-jit=yes",
         ])
     elif system == "Windows":
@@ -143,17 +141,13 @@ def compile_inference(script_name, output_name=None):
         # Only add icon if it exists
         if os.path.exists("icon.ico"):
             cmd.append("--windows-icon-from-ico=icon.ico")
-        # Add Windows-specific optimizations (only valid plugins)
+        # Add Windows-specific optimizations
         cmd.extend([
-            "--plugin-enable=numpy",  # Explicitly enable numpy plugin for Windows
-            "--plugin-enable=torch",  # Explicitly enable torch plugin for Windows
             "--module-parameter=torch-disable-jit=yes",  # Disable Torch JIT for standalone
         ])
     else:  # Linux/Ubuntu
-        # Linux specific plugins (only valid plugins)
+        # Linux specific options
         cmd.extend([
-            "--plugin-enable=numpy",
-            "--plugin-enable=torch",
             "--module-parameter=torch-disable-jit=yes",
         ])
     
@@ -168,34 +162,47 @@ def compile_inference(script_name, output_name=None):
         # ML utilities
         "sklearn", "pandas", "tqdm",
         # Model architecture
-        "segmentation_models_pytorch", "timm", "einops",
+        "segmentation_models_pytorch", "timm",
         # Data processing
         "yaml", "h5py",
         # Note: matplotlib is now optional in the insight modules
         # The code will work without it, just without visualization
     ]
     
+    # Check if einops is available and add it
+    try:
+        import einops
+        packages_to_include.append("einops")
+    except ImportError:
+        print("⚠️  einops not installed, skipping...")
+    
     # Include package data files (critical for many packages)
-    cmd.extend([
-        "--include-package-data=pydicom",  # Include pydicom data files like urls.json
-        "--include-package-data=nibabel",
-        "--include-package-data=PIL",
-        "--include-package-data=scipy",
-        "--include-package-data=numpy",
-        "--include-package-data=torch",
-        "--include-package-data=torchvision",
-        "--include-package-data=cv2",
-        "--include-package-data=skimage",
-        "--include-package-data=sklearn",  # Include sklearn data files
-        "--include-package-data=segmentation_models_pytorch",
-        "--include-package-data=SimpleITK",
-        "--include-package-data=imageio",
-        "--include-package-data=timm",
-        "--include-package-data=einops",
-        "--include-package-data=h5py",
-        "--include-package-data=pandas",
-        "--include-package-data=tqdm",
-    ])
+    package_data_list = [
+        "pydicom",  # Include pydicom data files like urls.json
+        "nibabel",
+        "PIL",
+        "scipy",
+        "numpy",
+        "torch",
+        "torchvision",
+        "cv2",
+        "skimage",
+        "sklearn",  # Include sklearn data files
+        "segmentation_models_pytorch",
+        "SimpleITK",
+        "imageio",
+        "timm",
+        "h5py",
+        "pandas",
+        "tqdm",
+    ]
+    
+    # Add einops data if available
+    if "einops" in packages_to_include:
+        package_data_list.append("einops")
+    
+    for pkg in package_data_list:
+        cmd.append(f"--include-package-data={pkg}")
     
     # Windows-specific: Enable multiprocessing support
     if system == "Windows":
